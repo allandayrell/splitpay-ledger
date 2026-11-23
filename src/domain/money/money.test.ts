@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import fc from 'fast-check';
 import {
   allocatePenniesEqual,
   allocatePenniesWeighted,
@@ -75,9 +76,40 @@ describe('Money Domain Engine', () => {
     expect(() => convertCurrencyToBRL(0, 5.5)).toThrow(DomainValidationError);
     expect(() => allocatePenniesEqual(0, 3)).toThrow(DomainValidationError);
     expect(() => allocatePenniesEqual(100, 0)).toThrow(DomainValidationError);
+    expect(() => allocatePenniesWeighted(0, [1, 1])).toThrow(DomainValidationError);
     expect(() => allocatePenniesWeighted(100, [])).toThrow(DomainValidationError);
     expect(() => allocatePenniesWeighted(100, [0, 0])).toThrow(DomainValidationError);
     expect(() => allocatePenniesWeighted(100, [1, -1])).toThrow(DomainValidationError);
     expect(() => formatBRL(10.5)).toThrow(DomainValidationError);
   });
+
+  it('preserves total monetary value across any arbitrary positive cent amount and participant count (1..50)', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 100_000_000 }),
+        fc.integer({ min: 1, max: 50 }),
+        (totalCents, participantCount) => {
+          const shares = allocatePenniesEqual(totalCents, participantCount);
+          const sum = shares.reduce((acc, current) => acc + current, 0);
+          return shares.length === participantCount && sum === totalCents;
+        },
+      ),
+    );
+  });
+
+  it('ensures difference between any two equal-split participants is never greater than 1 cent', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 100_000_000 }),
+        fc.integer({ min: 1, max: 50 }),
+        (totalCents, participantCount) => {
+          const shares = allocatePenniesEqual(totalCents, participantCount);
+          const maxShare = Math.max(...shares);
+          const minShare = Math.min(...shares);
+          return maxShare - minShare <= 1;
+        },
+      ),
+    );
+  });
 });
+
