@@ -61,3 +61,67 @@ export function convertCurrencyToBRL(originalAmountCents: Cents, exchangeRate: n
 
   return Math.round(originalAmountCents * exchangeRate);
 }
+
+export function allocatePenniesEqual(totalCents: Cents, count: number): Cents[] {
+  assertValidIntegerCents(totalCents, 'totalCents');
+  if (totalCents <= 0) {
+    throw new DomainValidationError('INVALID_TOTAL_AMOUNT', 'Total amount in cents must be greater than zero.');
+  }
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new DomainValidationError('INVALID_PARTICIPANT_COUNT', 'Participant count must be a positive integer.');
+  }
+
+  const baseShare = Math.floor(totalCents / count);
+  const remainder = totalCents - baseShare * count;
+
+  const shares: Cents[] = [];
+  for (let index = 0; index < count; index += 1) {
+    shares.push(index < remainder ? baseShare + 1 : baseShare);
+  }
+
+  return shares;
+}
+
+export function allocatePenniesWeighted(totalCents: Cents, weights: readonly number[]): Cents[] {
+  assertValidIntegerCents(totalCents, 'totalCents');
+  if (totalCents <= 0) {
+    throw new DomainValidationError('INVALID_TOTAL_AMOUNT', 'Total amount in cents must be greater than zero.');
+  }
+  if (weights.length === 0) {
+    throw new DomainValidationError('EMPTY_WEIGHTS', 'Weights array cannot be empty.');
+  }
+
+  let totalWeight = 0;
+  for (const weight of weights) {
+    if (typeof weight !== 'number' || !Number.isFinite(weight) || weight < 0) {
+      throw new DomainValidationError('INVALID_WEIGHT_VALUE', 'Each weight must be a non-negative finite number.');
+    }
+    totalWeight += weight;
+  }
+
+  if (totalWeight <= 0) {
+    throw new DomainValidationError('INVALID_TOTAL_WEIGHT', 'Sum of weights must be greater than zero.');
+  }
+
+  const shares: Cents[] = [];
+  let allocatedCents = 0;
+
+  for (const weight of weights) {
+    const exactShare = (totalCents * weight) / totalWeight;
+    const truncatedShare = Math.floor(exactShare);
+    shares.push(truncatedShare);
+    allocatedCents += truncatedShare;
+  }
+
+  let remainder = totalCents - allocatedCents;
+
+  for (let index = 0; index < shares.length && remainder > 0; index += 1) {
+    if ((weights[index] ?? 0) > 0) {
+      shares[index] = (shares[index] ?? 0) + 1;
+      remainder -= 1;
+    }
+  }
+
+  return shares;
+}
+
