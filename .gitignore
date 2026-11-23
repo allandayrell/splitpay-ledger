@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build & Coverage
+dist/
+dist-ssr/
+coverage/
+*.local
+
+# Playwright E2E
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Local Agent Memory & Internal Specs (Never push to GitHub)
+AGENT.md
+AGENTS.md
+REQUISITOS_TP.md
+REQUISITOS_TP..md
+plans/
+scripts/setup-github-project.ps1
+
+# Environment & IDE
+.env
+.env.*
+!.env.example
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
