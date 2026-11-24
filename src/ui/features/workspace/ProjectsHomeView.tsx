@@ -26,7 +26,12 @@ export interface ProjectsHomeViewProps {
   projects: readonly GroupLedgerState[];
   notifications: readonly EmailNotification[];
   errorMessage?: string | null;
-  onUpdateProfile: (name: string, email: string, avatarUrl: string) => boolean;
+  onUpdateProfile: (
+    name: string,
+    email: string,
+    avatarUrl: string,
+    receiveEmailNotifications: boolean,
+  ) => boolean;
   onMarkNotificationRead: (notificationId: string) => void;
   onLogout: () => void;
   onSelectProject: (groupId: string) => void;

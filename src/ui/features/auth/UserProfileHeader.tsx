@@ -1,11 +1,16 @@
 import { useState, type FormEvent } from 'react';
-import { Bell, Check, Edit3, LogOut, Mail, User, X } from 'lucide-react';
+import { Bell, Check, Edit3, LogOut, User, X } from 'lucide-react';
 import type { EmailNotification, UserAccount } from '../../../domain/types';
 
 export interface UserProfileHeaderProps {
   currentUser: UserAccount;
   notifications: readonly EmailNotification[];
-  onUpdateProfile: (name: string, email: string, avatarUrl: string) => boolean;
+  onUpdateProfile: (
+    name: string,
+    email: string,
+    avatarUrl: string,
+    receiveEmailNotifications: boolean,
+  ) => boolean;
   onMarkNotificationRead: (notificationId: string) => void;
   onOpenNotifiedGroup?: (groupId: string) => void;
   onLogout: () => void;
@@ -26,6 +31,9 @@ export function UserProfileHeader({
   const [draftName, setDraftName] = useState(currentUser.name);
   const [draftEmail, setDraftEmail] = useState(currentUser.email);
   const [draftAvatar, setDraftAvatar] = useState(currentUser.avatarUrl ?? '');
+  const [draftReceiveEmail, setDraftReceiveEmail] = useState(
+    currentUser.receiveEmailNotifications ?? true,
+  );
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -33,12 +41,13 @@ export function UserProfileHeader({
     setDraftName(currentUser.name);
     setDraftEmail(currentUser.email);
     setDraftAvatar(currentUser.avatarUrl ?? '');
+    setDraftReceiveEmail(currentUser.receiveEmailNotifications ?? true);
     setIsEditingProfile(true);
   }
 
   function handleSaveProfile(event: FormEvent) {
     event.preventDefault();
-    const ok = onUpdateProfile(draftName, draftEmail, draftAvatar);
+    const ok = onUpdateProfile(draftName, draftEmail, draftAvatar, draftReceiveEmail);
     if (ok) {
       setIsEditingProfile(false);
     }
@@ -76,19 +85,19 @@ export function UserProfileHeader({
 
         <div className="flex flex-wrap items-center gap-2.5">
           <button
-            data-testid="open-email-inbox-btn"
+            data-testid="open-notifications-btn"
             type="button"
             onClick={() => setIsInboxOpen((prev) => !prev)}
             className="relative inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-100"
           >
             <Bell className="h-4 w-4 text-indigo-600" />
-            Notificações de E-mail
+            Notificações
             {unreadCount > 0 ? (
               <span
                 data-testid="unread-notifications-badge"
                 className="rounded-full bg-rose-600 px-2 py-0.5 text-[11px] font-extrabold text-white"
               >
-                {unreadCount}
+                {unreadCount} {unreadCount === 1 ? 'nova' : 'novas'}
               </span>
             ) : null}
           </button>
@@ -170,6 +179,23 @@ export function UserProfileHeader({
             </div>
           </div>
 
+          <div className="mt-3 flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
+            <input
+              id="receive-email-checkbox"
+              data-testid="receive-email-checkbox"
+              type="checkbox"
+              checked={draftReceiveEmail}
+              onChange={(e) => setDraftReceiveEmail(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <label
+              htmlFor="receive-email-checkbox"
+              className="cursor-pointer text-xs font-semibold text-slate-700"
+            >
+              Desejo receber notificações também por e-mail quando eu for adicionado a um projeto
+            </label>
+          </div>
+
           {errorMessage ? (
             <p className="mt-2 text-xs font-semibold text-red-600">{errorMessage}</p>
           ) : null}
@@ -196,15 +222,13 @@ export function UserProfileHeader({
 
       {isInboxOpen ? (
         <div
-          data-testid="email-notifications-inbox"
+          data-testid="notifications-inbox"
           className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs"
         >
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Mail className="h-4 w-4 text-indigo-600" />
-              <h3 className="text-sm font-bold text-slate-900">
-                Caixa de Entrada de E-mails ({currentUser.email})
-              </h3>
+              <Bell className="h-4 w-4 text-indigo-600" />
+              <h3 className="text-sm font-bold text-slate-900">Minhas Notificações</h3>
             </div>
             <button
               type="button"
@@ -217,14 +241,14 @@ export function UserProfileHeader({
 
           {notifications.length === 0 ? (
             <p className="py-4 text-center text-xs text-slate-500">
-              Nenhuma notificação de e-mail recebida até o momento.
+              Nenhuma notificação até o momento.
             </p>
           ) : (
             <ul className="space-y-2.5">
               {notifications.map((notif) => (
                 <li
                   key={notif.id}
-                  data-testid={`email-notification-item-${notif.id}`}
+                  data-testid={`notification-item-${notif.id}`}
                   className={`rounded-xl border p-3.5 text-xs ${
                     notif.read
                       ? 'border-slate-200 bg-slate-50 text-slate-600'
@@ -232,7 +256,14 @@ export function UserProfileHeader({
                   }`}
                 >
                   <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-                    <p className="font-bold">{notif.subject}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold">{notif.subject}</p>
+                      {!notif.read ? (
+                        <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                          Nova notificação
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="flex items-center gap-2">
                       {onOpenNotifiedGroup ? (
                         <button
@@ -253,10 +284,10 @@ export function UserProfileHeader({
                           onClick={() => onMarkNotificationRead(notif.id)}
                           className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 font-semibold text-slate-700 hover:bg-slate-100"
                         >
-                          Marcar como lido
+                          Marcar como lida
                         </button>
                       ) : (
-                        <span className="text-[11px] text-slate-400">Lido</span>
+                        <span className="text-[11px] text-slate-400">Lida</span>
                       )}
                     </div>
                   </div>
