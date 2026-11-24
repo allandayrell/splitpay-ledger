@@ -1,7 +1,19 @@
 import { normalizeEmail } from '../auth/userAccount';
 import { DomainValidationError } from '../errors';
 import { addParticipant, createGroup, updateGroupName } from '../group/group';
-import type { Cents, CurrencyCode, Group, GroupLedgerState, UserAccount } from '../types';
+import {
+  applySettlementsToBalances,
+  simplifyDebts,
+  type ParticipantBalanceEntry,
+} from '../settlement/debtSimplifier';
+import type {
+  Cents,
+  CurrencyCode,
+  Group,
+  GroupLedgerState,
+  TransferInstruction,
+  UserAccount,
+} from '../types';
 
 export interface CreateProjectByOwnerInput {
   id?: string;
@@ -80,11 +92,9 @@ export function renameProjectAsOwner(
 
 export type ProjectGroupStatus = 'QUITE' | 'PENDENTE';
 
-export function resolveProjectStatus(project: GroupLedgerState): ProjectGroupStatus {
-  if (project.expenses.length === 0) {
-    return 'QUITE';
-  }
-
+export function calculateProjectEffectiveBalances(
+  project: GroupLedgerState,
+): ParticipantBalanceEntry[] {
   const netMap = new Map<string, number>();
   for (const participant of project.group.participants) {
     netMap.set(participant.id, 0);
@@ -99,19 +109,30 @@ export function resolveProjectStatus(project: GroupLedgerState): ProjectGroupSta
     }
   }
 
-  for (const settlement of project.settlements) {
-    netMap.set(
-      settlement.fromParticipantId,
-      (netMap.get(settlement.fromParticipantId) ?? 0) + settlement.amountCents,
-    );
-    netMap.set(
-      settlement.toParticipantId,
-      (netMap.get(settlement.toParticipantId) ?? 0) - settlement.amountCents,
-    );
-  }
+  const baseBalances: ParticipantBalanceEntry[] = project.group.participants.map((p) => ({
+    participantId: p.id,
+    netBalanceCents: netMap.get(p.id) ?? 0,
+  }));
 
-  const allZero = Array.from(netMap.values()).every((cents) => cents === 0);
-  return allZero ? 'QUITE' : 'PENDENTE';
+  try {
+    return applySettlementsToBalances(baseBalances, project.settlements);
+  } catch {
+    return baseBalances;
+  }
+}
+
+export function getProjectTransferPlan(project: GroupLedgerState): TransferInstruction[] {
+  try {
+    const effective = calculateProjectEffectiveBalances(project);
+    return simplifyDebts(effective);
+  } catch {
+    return [];
+  }
+}
+
+export function resolveProjectStatus(project: GroupLedgerState): ProjectGroupStatus {
+  const transfers = getProjectTransferPlan(project);
+  return transfers.length === 0 ? 'QUITE' : 'PENDENTE';
 }
 
 export function setProjectArchivedAsOwner(
@@ -148,42 +169,49 @@ export function sortProjectsByCreationDate(
   });
 }
 
-export function getUserNetBalanceInProject(
-  project: GroupLedgerState,
+export function findUserParticipantInGroup(
+  group: Group,
   user: Pick<UserAccount, 'id' | 'email'>,
-): Cents {
+) {
   const normalizedUserEmail = normalizeEmail(user.email);
-  const participant = project.group.participants.find(
+  return group.participants.find(
     (p) =>
       p.userId === user.id ||
       (p.email !== undefined && normalizeEmail(p.email) === normalizedUserEmail),
   );
+}
 
+export function getUserPendingTransfersInProject(
+  project: GroupLedgerState,
+  user: Pick<UserAccount, 'id' | 'email'>,
+): TransferInstruction[] {
+  const participant = findUserParticipantInGroup(project.group, user);
+  if (!participant) {
+    return [];
+  }
+
+  const transfers = getProjectTransferPlan(project);
+  return transfers.filter(
+    (t) => t.fromParticipantId === participant.id || t.toParticipantId === participant.id,
+  );
+}
+
+export function getUserNetBalanceInProject(
+  project: GroupLedgerState,
+  user: Pick<UserAccount, 'id' | 'email'>,
+): Cents {
+  const participant = findUserParticipantInGroup(project.group, user);
   if (!participant) {
     return 0;
   }
 
+  const userTransfers = getUserPendingTransfersInProject(project, user);
   let net = 0;
-
-  for (const expense of project.expenses) {
-    for (const payer of expense.payers) {
-      if (payer.participantId === participant.id) {
-        net += payer.amountCents;
-      }
-    }
-    for (const split of expense.splits) {
-      if (split.participantId === participant.id) {
-        net -= split.amountCents;
-      }
-    }
-  }
-
-  for (const settlement of project.settlements) {
-    if (settlement.fromParticipantId === participant.id) {
-      net += settlement.amountCents;
-    }
-    if (settlement.toParticipantId === participant.id) {
-      net -= settlement.amountCents;
+  for (const transfer of userTransfers) {
+    if (transfer.toParticipantId === participant.id) {
+      net += transfer.amountCents;
+    } else if (transfer.fromParticipantId === participant.id) {
+      net -= transfer.amountCents;
     }
   }
 
@@ -214,8 +242,8 @@ export function categorizeProjectsForUserHome(
       continue;
     }
 
-    const userNetCents = getUserNetBalanceInProject(project, user);
-    if (userNetCents !== 0) {
+    const userPendingTransfers = getUserPendingTransfersInProject(project, user);
+    if (userPendingTransfers.length > 0) {
       pendingActionProjects.push(project);
     } else {
       settledForUserProjects.push(project);

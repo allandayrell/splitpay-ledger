@@ -45,6 +45,7 @@ import {
 import type {
   CurrencyCode,
   EmailNotification,
+  Expense,
   GroupLedgerState,
   TransferInstruction,
   UserAccount,
@@ -101,6 +102,24 @@ function buildInitialWorkspace(users: readonly UserAccount[]): {
     notificationId: 'notif_seed_2',
   });
   p1.group = addCarlaP1.group;
+  p1.expenses = [
+    {
+      id: `exp_bill_${p1.group.id}`,
+      groupId: p1.group.id,
+      description: 'Conta do Projeto',
+      category: 'OTHER',
+      amountCents: 10000,
+      currency: p1.group.baseCurrency,
+      payers: [{ participantId: `p_${allan.id}`, amountCents: 10000 }],
+      splitType: 'SHARES',
+      splits: calculateWeightedSharesSplit(
+        10000,
+        p1.group.participants,
+        p1.group.participants.map((p) => ({ participantId: p.id, value: p.defaultWeight })),
+      ),
+      createdAt: p1.group.createdAt,
+    },
+  ];
 
   const p2 = createProjectForOwner({
     id: 'grp_republica',
@@ -146,7 +165,42 @@ function loadInitialSnapshot(): PersistedWorkspaceSnapshot {
     if (raw) {
       const parsed = JSON.parse(raw) as PersistedWorkspaceSnapshot;
       if (Array.isArray(parsed.users) && Array.isArray(parsed.projects)) {
-        return parsed;
+        const migratedProjects = parsed.projects.map((proj) => {
+          if (proj.expenses.length === 0 && proj.group.participants.length > 1) {
+            const firstPayerId = proj.group.participants[0]!.id;
+            const defaultAmountCents = 10000;
+            return {
+              ...proj,
+              expenses: [
+                {
+                  id: `exp_bill_${proj.group.id}`,
+                  groupId: proj.group.id,
+                  description: 'Conta Principal do Grupo',
+                  category: 'OTHER' as const,
+                  amountCents: defaultAmountCents,
+                  currency: proj.group.baseCurrency,
+                  payers: [{ participantId: firstPayerId, amountCents: defaultAmountCents }],
+                  splitType: 'SHARES' as const,
+                  splits: calculateWeightedSharesSplit(
+                    defaultAmountCents,
+                    proj.group.participants,
+                    proj.group.participants.map((p) => ({
+                      participantId: p.id,
+                      value: p.defaultWeight,
+                    })),
+                  ),
+                  createdAt: proj.group.createdAt,
+                },
+              ],
+            };
+          }
+          return proj;
+        });
+
+        return {
+          ...parsed,
+          projects: migratedProjects,
+        };
       }
     }
   } catch {
@@ -367,12 +421,36 @@ function SplitPayApplication() {
             onLogout={() => setCurrentUserId(null)}
             onSelectProject={(groupId) => {
               const target = visibleProjects.find((p) => p.group.id === groupId);
-              const firstParticipantId = target?.group.participants[0]?.id;
-              if (firstParticipantId) {
-                setSelectedPayerIds([firstParticipantId]);
-                setPayerAmounts({ [firstParticipantId]: rawAmount });
+              const existingExpense = target?.expenses[0];
+              if (existingExpense) {
+                const formattedAmount = (existingExpense.amountCents / 100).toFixed(2);
+                setRawAmount(formattedAmount);
+                const nextPayerIds = existingExpense.payers.map((py) => py.participantId);
+                const nextPayerAmounts: Record<string, string> = {};
+                for (const py of existingExpense.payers) {
+                  nextPayerAmounts[py.participantId] = (py.amountCents / 100).toFixed(2);
+                }
+                setSelectedPayerIds(nextPayerIds);
+                setPayerAmounts(nextPayerAmounts);
+                setSplitMode(existingExpense.splitType === 'EXACT' ? 'EXACT' : 'SHARES');
+                if (existingExpense.splitType === 'EXACT') {
+                  const exactMap: Record<string, string> = {};
+                  for (const sp of existingExpense.splits) {
+                    exactMap[sp.participantId] = (sp.amountCents / 100).toFixed(2);
+                  }
+                  setValuesByParticipant(exactMap);
+                } else {
+                  setValuesByParticipant({});
+                }
               } else {
-                setSelectedPayerIds([]);
+                const firstParticipantId = target?.group.participants[0]?.id;
+                if (firstParticipantId) {
+                  setSelectedPayerIds([firstParticipantId]);
+                  setPayerAmounts({ [firstParticipantId]: rawAmount });
+                } else {
+                  setSelectedPayerIds([]);
+                }
+                setValuesByParticipant({});
               }
               setPayerToAddId('');
               setActiveGroupId(groupId);
@@ -517,6 +595,8 @@ function SplitPayApplication() {
     netBalanceCents: 0,
   }));
 
+  let activeExpenseSnapshot: Expense | null = null;
+
   try {
     if (payersSumMatchesTotal && group.participants.length > 0) {
       const splits =
@@ -553,10 +633,49 @@ function SplitPayApplication() {
           netBalanceCents: paid - owed,
         };
       });
+
+      const validPayers = selectedPayerIds
+        .map((id) => ({
+          participantId: id,
+          amountCents: paidCentsByParticipant.get(id) ?? 0,
+        }))
+        .filter((py) => py.amountCents > 0);
+
+      activeExpenseSnapshot = {
+        id: `exp_bill_${group.id}`,
+        groupId: group.id,
+        description: 'Conta Principal do Grupo',
+        category: 'OTHER',
+        amountCents: totalExpenseCents,
+        currency: group.baseCurrency,
+        payers: validPayers,
+        splitType: splitMode,
+        splits,
+        createdAt: group.createdAt,
+      };
     }
   } catch {
     // Mantém saldo zero enquanto o usuário digita uma divisão exata incompleta
   }
+
+  const serializedActiveExpense = activeExpenseSnapshot
+    ? JSON.stringify(activeExpenseSnapshot)
+    : null;
+
+  useEffect(() => {
+    if (!activeGroupId || !serializedActiveExpense) return;
+    const parsedExpense = JSON.parse(serializedActiveExpense) as Expense;
+    setProjects((prev) =>
+      prev.map((proj) => {
+        if (proj.group.id !== activeGroupId) return proj;
+        const currentFirst = proj.expenses[0];
+        if (currentFirst && JSON.stringify(currentFirst) === serializedActiveExpense) {
+          return proj;
+        }
+        return { ...proj, expenses: [parsedExpense] };
+      }),
+    );
+  }, [activeGroupId, serializedActiveExpense]);
 
   let effectiveBalances = baseBalances;
   let transfers: TransferInstruction[] = [];
@@ -579,7 +698,11 @@ function SplitPayApplication() {
       setProjects((prev) =>
         prev.map((p) =>
           p.group.id === activeProject.group.id
-            ? { ...p, settlements: [...p.settlements, record] }
+            ? {
+                ...p,
+                expenses: activeExpenseSnapshot ? [activeExpenseSnapshot] : p.expenses,
+                settlements: [...p.settlements, record],
+              }
             : p,
         ),
       );
