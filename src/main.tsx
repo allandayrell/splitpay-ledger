@@ -1,6 +1,15 @@
-import { StrictMode, useState } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertCircle, ArrowLeft, Calculator, CheckCircle2, Crown, Wallet } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  Calculator,
+  CheckCircle2,
+  Crown,
+  Plus,
+  Trash2,
+  Wallet,
+} from 'lucide-react';
 import './index.css';
 import {
   addHybridParticipantToProject,
@@ -11,11 +20,12 @@ import {
   registerUserAccount,
   updateUserProfile,
 } from './domain/auth/userAccount';
-import { removeParticipant, updateParticipant } from './domain/group/group';
+import { removeParticipant } from './domain/group/group';
 import { formatBRL, toCents } from './domain/money/money';
 import {
   applySettlementsToBalances,
   createSettlementRecord,
+  revertSettlementRecord,
   simplifyDebts,
   type ParticipantBalanceEntry,
 } from './domain/settlement/debtSimplifier';
@@ -46,6 +56,15 @@ import { GroupHeader } from './ui/features/groups/GroupHeader';
 import { ParticipantsPanel } from './ui/features/groups/ParticipantsPanel';
 import { ProjectsHomeView } from './ui/features/workspace/ProjectsHomeView';
 
+const STORAGE_KEY = 'splitpay_ledger_workspace_v1';
+
+interface PersistedWorkspaceSnapshot {
+  users: UserAccount[];
+  currentUserId: string | null;
+  projects: GroupLedgerState[];
+  notifications: EmailNotification[];
+}
+
 function buildInitialWorkspace(users: readonly UserAccount[]): {
   projects: GroupLedgerState[];
   notifications: EmailNotification[];
@@ -58,7 +77,7 @@ function buildInitialWorkspace(users: readonly UserAccount[]): {
     name: 'Viagem Capitólio 2026',
     baseCurrency: 'BRL',
     owner: allan,
-    ownerDefaultWeight: 2,
+    ownerDefaultWeight: 1,
   });
 
   const addWarleyP1 = addHybridParticipantToProject(p1.group, users, {
@@ -116,25 +135,63 @@ function buildInitialWorkspace(users: readonly UserAccount[]): {
   };
 }
 
+function loadInitialSnapshot(): PersistedWorkspaceSnapshot {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as PersistedWorkspaceSnapshot;
+      if (Array.isArray(parsed.users) && Array.isArray(parsed.projects)) {
+        return parsed;
+      }
+    }
+  } catch {
+    // Fallback para seed padrão se o localStorage estiver vazio ou inválido
+  }
+
+  const seededUsers = createSeededUsers();
+  const initialWorkspace = buildInitialWorkspace(seededUsers);
+  return {
+    users: seededUsers,
+    currentUserId: 'usr_allan',
+    projects: initialWorkspace.projects,
+    notifications: initialWorkspace.notifications,
+  };
+}
+
 function SplitPayApplication() {
-  const [users, setUsers] = useState<UserAccount[]>(createSeededUsers);
-  const [currentUserId, setCurrentUserId] = useState<string | null>('usr_allan');
+  const [initialSnapshot] = useState<PersistedWorkspaceSnapshot>(loadInitialSnapshot);
+  const [users, setUsers] = useState<UserAccount[]>(initialSnapshot.users);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(initialSnapshot.currentUserId);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const initialData = useState(() => buildInitialWorkspace(createSeededUsers()))[0];
-  const [projects, setProjects] = useState<GroupLedgerState[]>(initialData.projects);
+  const [projects, setProjects] = useState<GroupLedgerState[]>(initialSnapshot.projects);
   const [notifications, setNotifications] = useState<EmailNotification[]>(
-    initialData.notifications,
+    initialSnapshot.notifications,
   );
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
 
   const [rawAmount, setRawAmount] = useState('100.00');
-  const [payerChecked, setPayerChecked] = useState<Record<string, boolean>>({});
+  const [selectedPayerIds, setSelectedPayerIds] = useState<string[]>([]);
+  const [payerToAddId, setPayerToAddId] = useState<string>('');
   const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({});
   const [splitMode, setSplitMode] = useState<AdvancedSplitMode>('SHARES');
   const [valuesByParticipant, setValuesByParticipant] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    try {
+      const snapshot: PersistedWorkspaceSnapshot = {
+        users,
+        currentUserId,
+        projects,
+        notifications,
+      };
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // Ignora falhas de quota do navegador
+    }
+  }, [users, currentUserId, projects, notifications]);
 
   const currentUser = users.find((u) => u.id === currentUserId) ?? null;
 
@@ -273,9 +330,12 @@ function SplitPayApplication() {
               const target = visibleProjects.find((p) => p.group.id === groupId);
               const firstParticipantId = target?.group.participants[0]?.id;
               if (firstParticipantId) {
-                setPayerChecked({ [firstParticipantId]: true });
+                setSelectedPayerIds([firstParticipantId]);
                 setPayerAmounts({ [firstParticipantId]: rawAmount });
+              } else {
+                setSelectedPayerIds([]);
               }
+              setPayerToAddId('');
               setActiveGroupId(groupId);
               setFeedbackError(null);
               setFeedbackBanner(null);
@@ -293,14 +353,13 @@ function SplitPayApplication() {
 
   function handleAddParticipantToActive(
     name: string,
-    defaultWeight: number,
     referencedUserEmailOrId?: string,
   ): boolean {
     if (!currentUser || !activeProject) return false;
     try {
       const result = addHybridParticipantToProject(activeProject.group, users, {
         name,
-        defaultWeight,
+        defaultWeight: 1,
         referencedUserEmailOrId,
         invitedByName: currentUser.name,
       });
@@ -328,22 +387,6 @@ function SplitPayApplication() {
     }
   }
 
-  function handleUpdateWeight(participantId: string, newWeight: number) {
-    if (!activeProject) return;
-    try {
-      const updatedGroup = updateParticipant(activeProject.group, {
-        participantId,
-        defaultWeight: newWeight,
-      });
-      setProjects((prev) =>
-        prev.map((p) => (p.group.id === activeProject.group.id ? { ...p, group: updatedGroup } : p)),
-      );
-      setFeedbackError(null);
-    } catch (err) {
-      setFeedbackError(err instanceof Error ? err.message : 'Peso inválido.');
-    }
-  }
-
   function handleRemoveParticipant(participantId: string) {
     if (!activeProject) return;
     try {
@@ -356,20 +399,45 @@ function SplitPayApplication() {
       setProjects((prev) =>
         prev.map((p) => (p.group.id === activeProject.group.id ? { ...p, group: updatedGroup } : p)),
       );
+      setSelectedPayerIds((prev) => prev.filter((id) => id !== participantId));
       setFeedbackError(null);
     } catch (err) {
       setFeedbackError(err instanceof Error ? err.message : 'Não foi possível remover participante.');
     }
   }
 
-  function handleTogglePayer(participantId: string, checked: boolean) {
-    setPayerChecked((prev) => {
-      const next = { ...prev, [participantId]: checked };
-      const activeIds = group.participants.filter((p) => next[p.id]).map((p) => p.id);
-      if (checked && activeIds.length === 1) {
+  const availablePayersToAdd = group.participants.filter(
+    (p) => !selectedPayerIds.includes(p.id),
+  );
+
+  function handleAddPayerById(participantId: string) {
+    if (!participantId || selectedPayerIds.includes(participantId)) return;
+    setSelectedPayerIds((prev) => {
+      const next = [...prev, participantId];
+      if (next.length === 1) {
         setPayerAmounts((prevAmounts) => ({
           ...prevAmounts,
           [participantId]: rawAmount,
+        }));
+      } else {
+        setPayerAmounts((prevAmounts) => ({
+          ...prevAmounts,
+          [participantId]: prevAmounts[participantId] ?? '',
+        }));
+      }
+      return next;
+    });
+    setPayerToAddId('');
+  }
+
+  function handleRemovePayerById(participantId: string) {
+    setSelectedPayerIds((prev) => {
+      const next = prev.filter((id) => id !== participantId);
+      if (next.length === 1 && next[0]) {
+        const remainingId = next[0];
+        setPayerAmounts((prevAmounts) => ({
+          ...prevAmounts,
+          [remainingId]: rawAmount,
         }));
       }
       return next;
@@ -386,7 +454,7 @@ function SplitPayApplication() {
   const paidCentsByParticipant = new Map<string, number>();
   let totalPaidCents = 0;
   for (const participant of group.participants) {
-    if (payerChecked[participant.id]) {
+    if (selectedPayerIds.includes(participant.id)) {
       try {
         const rawPaid = payerAmounts[participant.id] ?? '0';
         const cents = rawPaid.trim() === '' ? 0 : Math.max(0, toCents(rawPaid));
@@ -401,7 +469,9 @@ function SplitPayApplication() {
   }
 
   const payersSumMatchesTotal =
-    totalExpenseCents > 0 && totalPaidCents === totalExpenseCents;
+    totalExpenseCents > 0 &&
+    selectedPayerIds.length > 0 &&
+    totalPaidCents === totalExpenseCents;
 
   let baseBalances: ParticipantBalanceEntry[] = group.participants.map((p) => ({
     participantId: p.id,
@@ -479,6 +549,21 @@ function SplitPayApplication() {
     }
   }
 
+  function handleRevertSettlement(settlementId: string) {
+    if (!activeProject) return;
+    try {
+      const remaining = revertSettlementRecord(activeProject.settlements, settlementId);
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.group.id === activeProject.group.id ? { ...p, settlements: remaining } : p,
+        ),
+      );
+      setFeedbackError(null);
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Erro ao desfazer liquidação.');
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 py-8 text-slate-900">
       <div className="mx-auto max-w-6xl space-y-6 px-4">
@@ -536,7 +621,6 @@ function SplitPayApplication() {
               registeredUsers={users}
               canManageParticipants={true}
               onAddParticipant={handleAddParticipantToActive}
-              onUpdateParticipantWeight={handleUpdateWeight}
               onRemoveParticipant={handleRemoveParticipant}
             />
 
@@ -631,11 +715,8 @@ function SplitPayApplication() {
                   onChange={(e) => {
                     const nextVal = e.target.value;
                     setRawAmount(nextVal);
-                    const checkedIds = group.participants
-                      .filter((p) => payerChecked[p.id])
-                      .map((p) => p.id);
-                    if (checkedIds.length === 1 && checkedIds[0]) {
-                      setPayerAmounts((prev) => ({ ...prev, [checkedIds[0]!]: nextVal }));
+                    if (selectedPayerIds.length === 1 && selectedPayerIds[0]) {
+                      setPayerAmounts((prev) => ({ ...prev, [selectedPayerIds[0]!]: nextVal }));
                     }
                   }}
                   placeholder="100.00"
@@ -644,40 +725,77 @@ function SplitPayApplication() {
               </div>
 
               <div data-testid="multi-payers-section" className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
                   <span className="text-xs font-bold tracking-wider text-slate-600 uppercase">
-                    Quem pagou a conta? (Marque 1 ou mais pagadores)
+                    Quem pagou a conta?
                   </span>
                   <span className="text-xs font-semibold text-slate-500">
                     Soma paga: {formatBRL(totalPaidCents)} / {formatBRL(totalExpenseCents)}
                   </span>
                 </div>
 
-                <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-                  {group.participants.map((participant) => {
-                    const isChecked = Boolean(payerChecked[participant.id]);
-                    const currentPaidVal = payerAmounts[participant.id] ?? '';
+                {availablePayersToAdd.length > 0 ? (
+                  <div className="flex gap-2">
+                    <select
+                      data-testid="add-payer-select"
+                      value={payerToAddId}
+                      onChange={(e) => {
+                        const chosenId = e.target.value;
+                        if (chosenId) {
+                          handleAddPayerById(chosenId);
+                        }
+                      }}
+                      className="flex-1 rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-2 text-sm font-medium text-slate-800 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="">
+                        + Selecionar pessoa que pagou a conta...
+                      </option>
+                      {availablePayersToAdd.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!payerToAddId}
+                      onClick={() => handleAddPayerById(payerToAddId)}
+                      className="inline-flex items-center gap-1 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-bold text-white disabled:opacity-40"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Adicionar
+                    </button>
+                  </div>
+                ) : null}
 
-                    return (
-                      <div
-                        key={participant.id}
-                        data-testid={`payer-row-${participant.id}`}
-                        className="flex items-center justify-between gap-3 px-4 py-3"
-                      >
-                        <label className="flex cursor-pointer items-center gap-3">
-                          <input
-                            data-testid={`payer-checkbox-${participant.id}`}
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={(e) => handleTogglePayer(participant.id, e.target.checked)}
-                            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span className="text-sm font-semibold text-slate-900">
-                            {participant.name}
-                          </span>
-                        </label>
+                {selectedPayerIds.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-xs text-slate-500">
+                    Nenhum pagador selecionado. Escolha acima quem pagou a conta.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+                    {selectedPayerIds.map((payerParticipantId) => {
+                      const participant = group.participants.find(
+                        (p) => p.id === payerParticipantId,
+                      );
+                      if (!participant) return null;
+                      const currentPaidVal = payerAmounts[participant.id] ?? '';
 
-                        {isChecked ? (
+                      return (
+                        <div
+                          key={participant.id}
+                          data-testid={`payer-row-${participant.id}`}
+                          className="flex items-center justify-between gap-3 px-4 py-3"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-50 text-xs font-bold text-indigo-700">
+                              {participant.name.charAt(0).toUpperCase()}
+                            </div>
+                            <span className="text-sm font-semibold text-slate-900">
+                              {participant.name}
+                            </span>
+                          </div>
+
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-medium text-slate-500">Pagou R$:</span>
                             <input
@@ -695,14 +813,21 @@ function SplitPayApplication() {
                               }
                               className="w-28 rounded-lg border border-slate-300 px-3 py-1.5 text-right text-sm font-medium text-slate-900 focus:border-indigo-500 focus:outline-none"
                             />
+                            <button
+                              data-testid={`remove-payer-btn-${participant.id}`}
+                              type="button"
+                              onClick={() => handleRemovePayerById(participant.id)}
+                              title={`Remover ${participant.name} dos pagadores`}
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
                           </div>
-                        ) : (
-                          <span className="text-xs text-slate-400">Não pagou</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {!payersSumMatchesTotal ? (
                   <div
@@ -743,6 +868,7 @@ function SplitPayApplication() {
               transfers={transfers}
               settlements={settlements}
               onSettleTransfer={handleSettleTransfer}
+              onRevertSettlement={handleRevertSettlement}
             />
           </div>
         </div>
