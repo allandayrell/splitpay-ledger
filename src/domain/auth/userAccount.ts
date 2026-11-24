@@ -1,5 +1,6 @@
 import { DomainValidationError } from '../errors';
-import type { UserAccount } from '../types';
+import { addParticipant } from '../group/group';
+import type { EmailNotification, Group, UserAccount } from '../types';
 
 export interface RegisterUserInput {
   id?: string;
@@ -180,3 +181,100 @@ export function updateUserProfile(
       : user,
   );
 }
+
+export interface AddHybridParticipantInput {
+  participantId?: string;
+  name?: string;
+  defaultWeight?: number;
+  referencedUserEmailOrId?: string;
+  invitedByName: string;
+  notificationId?: string;
+  createdAt?: string;
+}
+
+export interface AddHybridParticipantResult {
+  group: Group;
+  notification: EmailNotification | null;
+}
+
+export function addHybridParticipantToProject(
+  group: Group,
+  users: readonly UserAccount[],
+  input: AddHybridParticipantInput,
+): AddHybridParticipantResult {
+  let matchedUser: UserAccount | undefined;
+
+  if (
+    input.referencedUserEmailOrId !== undefined &&
+    input.referencedUserEmailOrId.trim().length > 0
+  ) {
+    const query = input.referencedUserEmailOrId.trim().toLowerCase();
+    matchedUser = users.find(
+      (u) => u.id.toLowerCase() === query || normalizeEmail(u.email) === query,
+    );
+
+    if (!matchedUser) {
+      throw new DomainValidationError(
+        'REFERENCED_USER_NOT_FOUND',
+        `No registered user account matches "${input.referencedUserEmailOrId}".`,
+      );
+    }
+  }
+
+  const resolvedName =
+    input.name !== undefined && input.name.trim().length > 0
+      ? input.name.trim()
+      : (matchedUser?.name ?? '');
+
+  const updatedGroup = addParticipant(group, {
+    id: input.participantId,
+    name: resolvedName,
+    defaultWeight: input.defaultWeight ?? 1,
+    userId: matchedUser?.id,
+    email: matchedUser?.email,
+  });
+
+  if (!matchedUser) {
+    return {
+      group: updatedGroup,
+      notification: null,
+    };
+  }
+
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const notification: EmailNotification = {
+    id: input.notificationId ?? `notif_${Date.now()}`,
+    recipientUserId: matchedUser.id,
+    recipientEmail: matchedUser.email,
+    subject: `[SplitPay Ledger] Você foi adicionado ao projeto "${group.name}"`,
+    body: `Olá ${matchedUser.name}, ${input.invitedByName} adicionou sua conta (${matchedUser.email}) ao projeto "${group.name}". O projeto já está disponível na sua aba Home.`,
+    groupId: group.id,
+    groupName: group.name,
+    invitedByName: input.invitedByName,
+    read: false,
+    createdAt,
+  };
+
+  return {
+    group: updatedGroup,
+    notification,
+  };
+}
+
+export function getNotificationsForUser(
+  notifications: readonly EmailNotification[],
+  user: Pick<UserAccount, 'id' | 'email'>,
+): EmailNotification[] {
+  const normalized = normalizeEmail(user.email);
+  return notifications.filter(
+    (n) => n.recipientUserId === user.id || normalizeEmail(n.recipientEmail) === normalized,
+  );
+}
+
+export function markNotificationAsRead(
+  notifications: readonly EmailNotification[],
+  notificationId: string,
+): EmailNotification[] {
+  return notifications.map((n) => (n.id === notificationId ? { ...n, read: true } : n));
+}
+
