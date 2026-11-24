@@ -1,7 +1,7 @@
 import { normalizeEmail } from '../auth/userAccount';
 import { DomainValidationError } from '../errors';
 import { addParticipant, createGroup, updateGroupName } from '../group/group';
-import type { CurrencyCode, Group, GroupLedgerState, UserAccount } from '../types';
+import type { Cents, CurrencyCode, Group, GroupLedgerState, UserAccount } from '../types';
 
 export interface CreateProjectByOwnerInput {
   id?: string;
@@ -113,4 +113,120 @@ export function resolveProjectStatus(project: GroupLedgerState): ProjectGroupSta
   const allZero = Array.from(netMap.values()).every((cents) => cents === 0);
   return allZero ? 'QUITE' : 'PENDENTE';
 }
+
+export function setProjectArchivedAsOwner(
+  group: Group,
+  actorUserId: string,
+  archived: boolean,
+): Group {
+  if (!isProjectOwner(group, actorUserId)) {
+    throw new DomainValidationError(
+      'FORBIDDEN_NOT_PROJECT_OWNER',
+      'Only the project owner is allowed to archive or unarchive the project.',
+    );
+  }
+
+  return {
+    ...group,
+    archived,
+  };
+}
+
+export type ProjectDateSortOrder = 'NEWEST_FIRST' | 'OLDEST_FIRST';
+
+export function sortProjectsByCreationDate(
+  projects: readonly GroupLedgerState[],
+  order: ProjectDateSortOrder = 'NEWEST_FIRST',
+): GroupLedgerState[] {
+  return [...projects].sort((a, b) => {
+    const timeA = Date.parse(a.group.createdAt);
+    const timeB = Date.parse(b.group.createdAt);
+    if (timeA !== timeB) {
+      return order === 'NEWEST_FIRST' ? timeB - timeA : timeA - timeB;
+    }
+    return a.group.id.localeCompare(b.group.id);
+  });
+}
+
+export function getUserNetBalanceInProject(
+  project: GroupLedgerState,
+  user: Pick<UserAccount, 'id' | 'email'>,
+): Cents {
+  const normalizedUserEmail = normalizeEmail(user.email);
+  const participant = project.group.participants.find(
+    (p) =>
+      p.userId === user.id ||
+      (p.email !== undefined && normalizeEmail(p.email) === normalizedUserEmail),
+  );
+
+  if (!participant) {
+    return 0;
+  }
+
+  let net = 0;
+
+  for (const expense of project.expenses) {
+    for (const payer of expense.payers) {
+      if (payer.participantId === participant.id) {
+        net += payer.amountCents;
+      }
+    }
+    for (const split of expense.splits) {
+      if (split.participantId === participant.id) {
+        net -= split.amountCents;
+      }
+    }
+  }
+
+  for (const settlement of project.settlements) {
+    if (settlement.fromParticipantId === participant.id) {
+      net += settlement.amountCents;
+    }
+    if (settlement.toParticipantId === participant.id) {
+      net -= settlement.amountCents;
+    }
+  }
+
+  return net;
+}
+
+export interface CategorizedUserProjects {
+  pendingActionProjects: GroupLedgerState[];
+  settledForUserProjects: GroupLedgerState[];
+  archivedProjects: GroupLedgerState[];
+}
+
+export function categorizeProjectsForUserHome(
+  projects: readonly GroupLedgerState[],
+  user: Pick<UserAccount, 'id' | 'email'>,
+  sortOrder: ProjectDateSortOrder = 'NEWEST_FIRST',
+): CategorizedUserProjects {
+  const visible = filterProjectsForUser(projects, user);
+  const sorted = sortProjectsByCreationDate(visible, sortOrder);
+
+  const pendingActionProjects: GroupLedgerState[] = [];
+  const settledForUserProjects: GroupLedgerState[] = [];
+  const archivedProjects: GroupLedgerState[] = [];
+
+  for (const project of sorted) {
+    if (project.group.archived) {
+      archivedProjects.push(project);
+      continue;
+    }
+
+    const userNetCents = getUserNetBalanceInProject(project, user);
+    if (userNetCents !== 0) {
+      pendingActionProjects.push(project);
+    } else {
+      settledForUserProjects.push(project);
+    }
+  }
+
+  return {
+    pendingActionProjects,
+    settledForUserProjects,
+    archivedProjects,
+  };
+}
+
 
