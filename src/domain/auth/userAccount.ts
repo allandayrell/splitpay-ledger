@@ -8,6 +8,7 @@ export interface RegisterUserInput {
   email: string;
   password: string;
   avatarUrl?: string;
+  receiveEmailNotifications?: boolean;
   createdAt?: string;
 }
 
@@ -16,6 +17,7 @@ export interface UpdateUserProfileInput {
   name?: string;
   email?: string;
   avatarUrl?: string;
+  receiveEmailNotifications?: boolean;
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -37,6 +39,7 @@ export function createSeededUsers(): UserAccount[] {
       email: 'allan.dayrell@gmail.com',
       passwordHash: hashPassword('senha123'),
       avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Allan+Dayrell',
+      receiveEmailNotifications: true,
       createdAt: timestamp,
     },
     {
@@ -45,6 +48,7 @@ export function createSeededUsers(): UserAccount[] {
       email: 'warley@splitpay.dev',
       passwordHash: hashPassword('senha123'),
       avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Warley',
+      receiveEmailNotifications: true,
       createdAt: timestamp,
     },
     {
@@ -53,6 +57,7 @@ export function createSeededUsers(): UserAccount[] {
       email: 'alice@splitpay.dev',
       passwordHash: hashPassword('senha123'),
       avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Alice+Silva',
+      receiveEmailNotifications: true,
       createdAt: timestamp,
     },
     {
@@ -61,6 +66,7 @@ export function createSeededUsers(): UserAccount[] {
       email: 'bruno@splitpay.dev',
       passwordHash: hashPassword('senha123'),
       avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Bruno+Costa',
+      receiveEmailNotifications: false,
       createdAt: timestamp,
     },
     {
@@ -69,6 +75,7 @@ export function createSeededUsers(): UserAccount[] {
       email: 'carla@splitpay.dev',
       passwordHash: hashPassword('senha123'),
       avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Carla+Souza',
+      receiveEmailNotifications: true,
       createdAt: timestamp,
     },
   ];
@@ -113,6 +120,7 @@ export function registerUserAccount(
     avatarUrl:
       input.avatarUrl?.trim() ||
       `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(trimmedName)}`,
+    receiveEmailNotifications: input.receiveEmailNotifications ?? true,
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
 }
@@ -167,6 +175,10 @@ export function updateUserProfile(
 
   const nextAvatar =
     input.avatarUrl !== undefined ? input.avatarUrl.trim() : target.avatarUrl;
+  const nextReceiveEmail =
+    input.receiveEmailNotifications !== undefined
+      ? input.receiveEmailNotifications
+      : (target.receiveEmailNotifications ?? true);
 
   return users.map((user) =>
     user.id === input.userId
@@ -177,6 +189,7 @@ export function updateUserProfile(
           avatarUrl:
             nextAvatar ||
             `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(nextName)}`,
+          receiveEmailNotifications: nextReceiveEmail,
         }
       : user,
   );
@@ -242,15 +255,17 @@ export function addHybridParticipantToProject(
   }
 
   const createdAt = input.createdAt ?? new Date().toISOString();
+  const sentToEmail = matchedUser.receiveEmailNotifications ?? true;
   const notification: EmailNotification = {
     id: input.notificationId ?? `notif_${Date.now()}`,
     recipientUserId: matchedUser.id,
     recipientEmail: matchedUser.email,
-    subject: `[SplitPay Ledger] Você foi adicionado ao projeto "${group.name}"`,
-    body: `Olá ${matchedUser.name}, ${input.invitedByName} adicionou sua conta (${matchedUser.email}) ao projeto "${group.name}". O projeto já está disponível na sua aba Home.`,
+    subject: `Novo projeto adicionado: "${group.name}"`,
+    body: `Olá ${matchedUser.name}, ${input.invitedByName} adicionou você ao projeto "${group.name}".`,
     groupId: group.id,
     groupName: group.name,
     invitedByName: input.invitedByName,
+    sentToEmail,
     read: false,
     createdAt,
   };

@@ -70,11 +70,13 @@ describe('User Account, Profile, Hybrid Participant Link & Email Notifications',
       userId: 'usr_allan',
       name: 'Allan D.',
       avatarUrl: 'https://example.com/allan.png',
+      receiveEmailNotifications: false,
     });
 
     const updatedAllan = updatedList.find((u) => u.id === 'usr_allan');
     expect(updatedAllan?.name).toBe('Allan D.');
     expect(updatedAllan?.avatarUrl).toBe('https://example.com/allan.png');
+    expect(updatedAllan?.receiveEmailNotifications).toBe(false);
 
     expect(() =>
       updateUserProfile(users, { userId: 'usr_unknown', name: 'Teste' }),
@@ -144,7 +146,15 @@ describe('User Account, Profile, Hybrid Participant Link & Email Notifications',
     expect(result.notification).not.toBeNull();
     expect(result.notification?.recipientEmail).toBe('warley@splitpay.dev');
     expect(result.notification?.groupId).toBe('grp_viagem');
+    expect(result.notification?.sentToEmail).toBe(true);
     expect(result.notification?.read).toBe(false);
+
+    const brunoResult = addHybridParticipantToProject(result.group, users, {
+      participantId: 'p_bruno',
+      referencedUserEmailOrId: 'bruno@splitpay.dev',
+      invitedByName: 'Allan Dayrell',
+    });
+    expect(brunoResult.notification?.sentToEmail).toBe(false);
   });
 
   it('rejects hybrid participant addition when referenced user account does not exist or is already in the group', () => {
