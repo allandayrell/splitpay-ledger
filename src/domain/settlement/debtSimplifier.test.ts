@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { simplifyDebts } from './debtSimplifier';
+import {
+  applySettlementsToBalances,
+  createSettlementRecord,
+  simplifyDebts,
+} from './debtSimplifier';
+import { DomainValidationError } from '../errors';
+import type { Group } from '../types';
+
+const sampleGroup: Group = {
+  id: 'grp_1',
+  name: 'Viagem',
+  baseCurrency: 'BRL',
+  participants: [
+    { id: 'p_alice', name: 'Alice', defaultWeight: 1 },
+    { id: 'p_bruno', name: 'Bruno', defaultWeight: 1 },
+    { id: 'p_carla', name: 'Carla', defaultWeight: 1 },
+    { id: 'p_diego', name: 'Diego', defaultWeight: 1 },
+  ],
+  createdAt: '2026-11-23T19:00:00.000Z',
+};
 
 describe('Debt Simplifier & Settlement Engine', () => {
   it('returns no transfers when all participants are already settled (zero balances)', () => {
@@ -75,4 +94,87 @@ describe('Debt Simplifier & Settlement Engine', () => {
       { fromParticipantId: 'p_alice', toParticipantId: 'p_carla', amountCents: 5000 },
     ]);
   });
+
+  it('applies deterministic tie-breaking by participant ID when two creditors or debtors have identical balances', () => {
+    const tiedBalances = [
+      { participantId: 'p_diego', netBalanceCents: -3000 },
+      { participantId: 'p_bruno', netBalanceCents: -3000 },
+      { participantId: 'p_carla', netBalanceCents: 3000 },
+      { participantId: 'p_alice', netBalanceCents: 3000 },
+    ];
+
+    const transfers = simplifyDebts(tiedBalances);
+    expect(transfers).toEqual([
+      { fromParticipantId: 'p_bruno', toParticipantId: 'p_alice', amountCents: 3000 },
+      { fromParticipantId: 'p_diego', toParticipantId: 'p_carla', amountCents: 3000 },
+    ]);
+  });
+
+  it('recalculates remaining simplified transfers after a suggested transfer is marked as settled/paid', () => {
+    const initialBalances = [
+      { participantId: 'p_alice', netBalanceCents: 6000 },
+      { participantId: 'p_bruno', netBalanceCents: -2500 },
+      { participantId: 'p_carla', netBalanceCents: -3500 },
+    ];
+
+    const settlement = createSettlementRecord(sampleGroup, {
+      id: 'set_1',
+      groupId: 'grp_1',
+      fromParticipantId: 'p_carla',
+      toParticipantId: 'p_alice',
+      amountCents: 3500,
+    });
+
+    const updatedBalances = applySettlementsToBalances(initialBalances, [settlement]);
+    const remainingTransfers = simplifyDebts(updatedBalances);
+
+    expect(remainingTransfers).toEqual([
+      { fromParticipantId: 'p_bruno', toParticipantId: 'p_alice', amountCents: 2500 },
+    ]);
+
+    expect(() =>
+      simplifyDebts([
+        { participantId: 'p_alice', netBalanceCents: 1000 },
+        { participantId: 'p_bruno', netBalanceCents: -500 },
+      ]),
+    ).toThrow(DomainValidationError);
+
+    expect(() =>
+      createSettlementRecord(sampleGroup, {
+        groupId: 'grp_1',
+        fromParticipantId: 'p_alice',
+        toParticipantId: 'p_alice',
+        amountCents: 1000,
+      }),
+    ).toThrow(DomainValidationError);
+
+    expect(() =>
+      createSettlementRecord(sampleGroup, {
+        groupId: 'grp_1',
+        fromParticipantId: 'p_alice',
+        toParticipantId: 'p_bruno',
+        amountCents: 0,
+      }),
+    ).toThrow(DomainValidationError);
+
+    expect(() =>
+      createSettlementRecord(sampleGroup, {
+        groupId: 'grp_1',
+        fromParticipantId: 'p_alice',
+        toParticipantId: 'p_ghost',
+        amountCents: 1000,
+      }),
+    ).toThrow(DomainValidationError);
+
+    expect(() =>
+      applySettlementsToBalances(initialBalances, [
+        { ...settlement, fromParticipantId: 'p_ghost' },
+      ]),
+    ).toThrow(DomainValidationError);
+
+    expect(() =>
+      applySettlementsToBalances(initialBalances, [{ ...settlement, amountCents: 0 }]),
+    ).toThrow(DomainValidationError);
+  });
 });
+
