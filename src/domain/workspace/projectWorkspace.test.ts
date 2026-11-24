@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  categorizeProjectsForUserHome,
   createProjectForOwner,
   filterProjectsForUser,
+  getUserNetBalanceInProject,
   isProjectOwner,
   isUserParticipantOrOwner,
   renameProjectAsOwner,
   resolveProjectStatus,
+  setProjectArchivedAsOwner,
+  sortProjectsByCreationDate,
 } from './projectWorkspace';
 import { addHybridParticipantToProject, createSeededUsers } from '../auth/userAccount';
 import { DomainValidationError } from '../errors';
@@ -141,4 +145,133 @@ describe('Multi-Project Workspace & Owner vs Participant Permissions', () => {
     expect(aliceHomeProjects).toHaveLength(1);
     expect(aliceHomeProjects[0]?.group.name).toBe('Churrasco da Turma');
   });
+
+  it('allows only the project owner to archive or unarchive a project for all members', () => {
+    const project = createProjectForOwner({ id: 'grp_1', name: 'Viagem', owner: allan });
+    project.group = addHybridParticipantToProject(project.group, users, {
+      referencedUserEmailOrId: 'warley@splitpay.dev',
+      invitedByName: allan.name,
+    }).group;
+
+    const archivedGroup = setProjectArchivedAsOwner(project.group, allan.id, true);
+    expect(archivedGroup.archived).toBe(true);
+
+    const reopenedGroup = setProjectArchivedAsOwner(archivedGroup, allan.id, false);
+    expect(reopenedGroup.archived).toBe(false);
+
+    expect(() => setProjectArchivedAsOwner(project.group, warley.id, true)).toThrow(
+      DomainValidationError,
+    );
+  });
+
+  it('sorts projects by creation date in newest-first or oldest-first order', () => {
+    const pOld = createProjectForOwner({
+      id: 'grp_old',
+      name: 'Projeto Antigo',
+      owner: allan,
+      createdAt: '2026-01-10T10:00:00.000Z',
+    });
+    const pMid = createProjectForOwner({
+      id: 'grp_mid',
+      name: 'Projeto Meio',
+      owner: allan,
+      createdAt: '2026-06-15T10:00:00.000Z',
+    });
+    const pNew = createProjectForOwner({
+      id: 'grp_new',
+      name: 'Projeto Novo',
+      owner: allan,
+      createdAt: '2026-11-20T10:00:00.000Z',
+    });
+
+    const newestFirst = sortProjectsByCreationDate([pOld, pNew, pMid], 'NEWEST_FIRST');
+    expect(newestFirst.map((p) => p.group.id)).toEqual(['grp_new', 'grp_mid', 'grp_old']);
+
+    const oldestFirst = sortProjectsByCreationDate([pOld, pNew, pMid], 'OLDEST_FIRST');
+    expect(oldestFirst.map((p) => p.group.id)).toEqual(['grp_old', 'grp_mid', 'grp_new']);
+  });
+
+  it('calculates individual user net balance in a project considering expenses and settlements', () => {
+    const project = createProjectForOwner({ id: 'grp_1', name: 'Viagem', owner: allan });
+    project.group = addHybridParticipantToProject(project.group, users, {
+      participantId: 'p_warley',
+      referencedUserEmailOrId: 'warley@splitpay.dev',
+      invitedByName: allan.name,
+    }).group;
+
+    project.expenses.push({
+      id: 'exp_1',
+      groupId: 'grp_1',
+      description: 'Jantar',
+      category: 'FOOD',
+      amountCents: 12000,
+      currency: 'BRL',
+      payers: [{ participantId: `p_${allan.id}`, amountCents: 12000 }],
+      splitType: 'EQUAL',
+      splits: [
+        { participantId: `p_${allan.id}`, amountCents: 6000 },
+        { participantId: 'p_warley', amountCents: 6000 },
+      ],
+      createdAt: '2026-11-24T12:00:00.000Z',
+    });
+
+    expect(getUserNetBalanceInProject(project, allan)).toBe(6000);
+    expect(getUserNetBalanceInProject(project, warley)).toBe(-6000);
+    expect(getUserNetBalanceInProject(project, alice)).toBe(0);
+  });
+
+  it('categorizes user projects into Pending Action, Settled For User, and Archived sections', () => {
+    const pPending = createProjectForOwner({
+      id: 'grp_pending',
+      name: 'Projeto Com Saldo Pendente',
+      owner: allan,
+      createdAt: '2026-11-22T10:00:00.000Z',
+    });
+    pPending.group = addHybridParticipantToProject(pPending.group, users, {
+      participantId: 'p_warley',
+      referencedUserEmailOrId: 'warley@splitpay.dev',
+      invitedByName: allan.name,
+    }).group;
+    pPending.expenses.push({
+      id: 'exp_1',
+      groupId: 'grp_pending',
+      description: 'Passeio',
+      category: 'ENTERTAINMENT',
+      amountCents: 8000,
+      currency: 'BRL',
+      payers: [{ participantId: `p_${allan.id}`, amountCents: 8000 }],
+      splitType: 'EQUAL',
+      splits: [
+        { participantId: `p_${allan.id}`, amountCents: 4000 },
+        { participantId: 'p_warley', amountCents: 4000 },
+      ],
+      createdAt: '2026-11-22T11:00:00.000Z',
+    });
+
+    const pSettled = createProjectForOwner({
+      id: 'grp_settled',
+      name: 'Projeto Minha Parte Quite',
+      owner: allan,
+      createdAt: '2026-11-23T10:00:00.000Z',
+    });
+
+    const pArchived = createProjectForOwner({
+      id: 'grp_archived',
+      name: 'Projeto Arquivado Pelo Dono',
+      owner: allan,
+      createdAt: '2026-11-20T10:00:00.000Z',
+    });
+    pArchived.group = setProjectArchivedAsOwner(pArchived.group, allan.id, true);
+
+    const categorized = categorizeProjectsForUserHome(
+      [pPending, pSettled, pArchived],
+      allan,
+      'NEWEST_FIRST',
+    );
+
+    expect(categorized.pendingActionProjects.map((p) => p.group.id)).toEqual(['grp_pending']);
+    expect(categorized.settledForUserProjects.map((p) => p.group.id)).toEqual(['grp_settled']);
+    expect(categorized.archivedProjects.map((p) => p.group.id)).toEqual(['grp_archived']);
+  });
 });
+
