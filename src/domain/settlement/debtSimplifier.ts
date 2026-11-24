@@ -180,3 +180,19 @@ export function applySettlementsToBalances(
   }));
 }
 
+export function revertSettlementRecord(
+  settlements: readonly SettlementRecord[],
+  settlementId: string,
+): SettlementRecord[] {
+  const exists = settlements.some((s) => s.id === settlementId);
+  if (!exists) {
+    throw new DomainValidationError(
+      'SETTLEMENT_NOT_FOUND',
+      `Settlement record "${settlementId}" was not found.`,
+    );
+  }
+
+  return settlements.filter((s) => s.id !== settlementId);
+}
+
+
