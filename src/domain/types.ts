@@ -18,6 +18,7 @@ export interface UserAccount {
   email: string;
   passwordHash: string;
   avatarUrl?: string;
+  receiveEmailNotifications?: boolean;
   createdAt: string;
 }
 
@@ -30,6 +31,7 @@ export interface EmailNotification {
   groupId: string;
   groupName: string;
   invitedByName: string;
+  sentToEmail?: boolean;
   read: boolean;
   createdAt: string;
 }
