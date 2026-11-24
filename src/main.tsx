@@ -2,6 +2,8 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   AlertCircle,
+  Archive,
+  ArchiveRestore,
   ArrowLeft,
   Calculator,
   CheckCircle2,
@@ -38,6 +40,7 @@ import {
   filterProjectsForUser,
   isProjectOwner,
   renameProjectAsOwner,
+  setProjectArchivedAsOwner,
 } from './domain/workspace/projectWorkspace';
 import type {
   CurrencyCode,
@@ -78,6 +81,7 @@ function buildInitialWorkspace(users: readonly UserAccount[]): {
     baseCurrency: 'BRL',
     owner: allan,
     ownerDefaultWeight: 1,
+    createdAt: '2026-11-23T14:00:00.000Z',
   });
 
   const addWarleyP1 = addHybridParticipantToProject(p1.group, users, {
@@ -104,6 +108,7 @@ function buildInitialWorkspace(users: readonly UserAccount[]): {
     baseCurrency: 'BRL',
     owner: warley,
     ownerDefaultWeight: 1,
+    createdAt: '2026-10-15T10:00:00.000Z',
   });
 
   const addAllanP2 = addHybridParticipantToProject(p2.group, users, {
@@ -257,11 +262,45 @@ function SplitPayApplication() {
         owner: currentUser,
       });
       setProjects((prev) => [newProj, ...prev]);
+      const ownerParticipantId = newProj.group.participants[0]?.id;
+      if (ownerParticipantId) {
+        setSelectedPayerIds([ownerParticipantId]);
+        setPayerAmounts({ [ownerParticipantId]: rawAmount });
+      } else {
+        setSelectedPayerIds([]);
+      }
+      setPayerToAddId('');
+      setActiveGroupId(newProj.group.id);
       setFeedbackError(null);
+      setFeedbackBanner(null);
       return true;
     } catch (err) {
       setFeedbackError(err instanceof Error ? err.message : 'Erro ao criar projeto.');
       return false;
+    }
+  }
+
+  function handleToggleArchiveProject(groupId: string, nextArchived: boolean) {
+    if (!currentUser) return;
+    try {
+      setProjects((prev) =>
+        prev.map((proj) =>
+          proj.group.id === groupId
+            ? {
+                ...proj,
+                group: setProjectArchivedAsOwner(proj.group, currentUser.id, nextArchived),
+              }
+            : proj,
+        ),
+      );
+      setFeedbackError(null);
+      setFeedbackBanner(
+        nextArchived
+          ? 'Projeto arquivado para todos os participantes!'
+          : 'Projeto reaberto e movido de volta para os projetos ativos!',
+      );
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Sem permissão para arquivar.');
     }
   }
 
@@ -582,12 +621,36 @@ function SplitPayApplication() {
             Voltar para Meus Projetos
           </button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {isOwner ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900">
-                <Crown className="h-3.5 w-3.5" />
-                Dono do Projeto
-              </span>
+              <>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900">
+                  <Crown className="h-3.5 w-3.5" />
+                  Dono do Projeto
+                </span>
+                <button
+                  data-testid="toggle-archive-project-btn"
+                  type="button"
+                  onClick={() => handleToggleArchiveProject(group.id, !group.archived)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-1.5 text-xs font-bold transition ${
+                    group.archived
+                      ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  {group.archived ? (
+                    <>
+                      <ArchiveRestore className="h-3.5 w-3.5" />
+                      Reabrir Projeto
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="h-3.5 w-3.5" />
+                      Arquivar Projeto
+                    </>
+                  )}
+                </button>
+              </>
             ) : (
               <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
                 Participante Comum

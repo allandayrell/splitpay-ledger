@@ -88,6 +88,7 @@ export interface Group {
   name: string;
   baseCurrency: CurrencyCode;
   ownerUserId?: string;
+  archived?: boolean;
   participants: Participant[];
   createdAt: string;
 }
