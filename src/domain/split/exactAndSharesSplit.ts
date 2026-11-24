@@ -1,5 +1,5 @@
 import { DomainValidationError } from '../errors';
-import { assertValidIntegerCents } from '../money/money';
+import { allocatePenniesWeighted, assertValidIntegerCents } from '../money/money';
 import type { Cents, ExpenseSplit, Participant, SplitShareInput } from '../types';
 
 export function assertKnownParticipants(
@@ -80,3 +80,44 @@ export function calculateExactSplit(
 
   return splits;
 }
+
+export function calculateWeightedSharesSplit(
+  totalCents: Cents,
+  groupParticipants: readonly Participant[],
+  inputs: readonly SplitShareInput[],
+): ExpenseSplit[] {
+  assertValidIntegerCents(totalCents, 'totalCents');
+  if (totalCents <= 0) {
+    throw new DomainValidationError(
+      'INVALID_EXPENSE_TOTAL',
+      'Total expense amount in cents must be greater than zero.',
+    );
+  }
+
+  assertKnownParticipants(groupParticipants, inputs);
+
+  const weights = inputs.map((item) => {
+    if (item.value !== undefined) {
+      return item.value;
+    }
+    const participant = groupParticipants.find((p) => p.id === item.participantId);
+    return participant?.defaultWeight ?? 1;
+  });
+
+  const allocatedPennies = allocatePenniesWeighted(totalCents, weights);
+
+  const splits: ExpenseSplit[] = [];
+  for (let index = 0; index < inputs.length; index += 1) {
+    const amountCents = allocatedPennies[index] ?? 0;
+    const participantId = inputs[index]?.participantId;
+    if (participantId && amountCents > 0) {
+      splits.push({
+        participantId,
+        amountCents,
+      });
+    }
+  }
+
+  return splits;
+}
+
