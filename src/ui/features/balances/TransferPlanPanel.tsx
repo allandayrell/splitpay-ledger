@@ -1,4 +1,4 @@
-import { ArrowRight, CheckCircle2, HandCoins, History } from 'lucide-react';
+import { ArrowRight, CheckCircle2, HandCoins, History, RotateCcw } from 'lucide-react';
 import { formatBRL } from '../../../domain/money/money';
 import type {
   Participant,
@@ -11,6 +11,7 @@ export interface TransferPlanPanelProps {
   transfers: readonly TransferInstruction[];
   settlements: readonly SettlementRecord[];
   onSettleTransfer: (transfer: TransferInstruction) => void;
+  onRevertSettlement?: (settlementId: string) => void;
 }
 
 export function TransferPlanPanel({
@@ -18,6 +19,7 @@ export function TransferPlanPanel({
   transfers,
   settlements,
   onSettleTransfer,
+  onRevertSettlement,
 }: TransferPlanPanelProps) {
   const nameById = new Map(participants.map((p) => [p.id, p.name]));
 
@@ -120,9 +122,23 @@ export function TransferPlanPanel({
                   <strong>{getName(settlement.fromParticipantId)}</strong> pagou para{' '}
                   <strong>{getName(settlement.toParticipantId)}</strong>
                 </span>
-                <span className="font-bold text-emerald-700">
-                  {formatBRL(settlement.amountCents)}
-                </span>
+                <div className="flex items-center gap-2.5">
+                  <span className="font-bold text-emerald-700">
+                    {formatBRL(settlement.amountCents)}
+                  </span>
+                  {onRevertSettlement ? (
+                    <button
+                      data-testid={`revert-settlement-btn-${settlement.id}`}
+                      type="button"
+                      onClick={() => onRevertSettlement(settlement.id)}
+                      title="Desfazer esta liquidação"
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Voltar
+                    </button>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>

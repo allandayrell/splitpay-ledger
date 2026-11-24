@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { AtSign, Scale, Trash2, UserCheck, UserPlus } from 'lucide-react';
+import { AtSign, Trash2, UserCheck, UserPlus } from 'lucide-react';
 import type { Participant, UserAccount } from '../../../domain/types';
 
 export interface ParticipantsPanelProps {
@@ -8,10 +8,8 @@ export interface ParticipantsPanelProps {
   canManageParticipants?: boolean;
   onAddParticipant: (
     name: string,
-    defaultWeight: number,
     referencedUserEmailOrId?: string,
   ) => boolean;
-  onUpdateParticipantWeight: (participantId: string, newWeight: number) => void;
   onRemoveParticipant: (participantId: string) => void;
 }
 
@@ -20,11 +18,9 @@ export function ParticipantsPanel({
   registeredUsers = [],
   canManageParticipants = true,
   onAddParticipant,
-  onUpdateParticipantWeight,
   onRemoveParticipant,
 }: ParticipantsPanelProps) {
   const [name, setName] = useState('');
-  const [weight, setWeight] = useState('1');
   const [selectedUserEmail, setSelectedUserEmail] = useState('');
 
   function handleSelectAccount(email: string) {
@@ -39,15 +35,12 @@ export function ParticipantsPanel({
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    const numericWeight = Number(weight);
     const added = onAddParticipant(
       name,
-      numericWeight,
       selectedUserEmail.trim() !== '' ? selectedUserEmail : undefined,
     );
     if (added) {
       setName('');
-      setWeight('1');
       setSelectedUserEmail('');
     }
   }
@@ -59,50 +52,28 @@ export function ParticipantsPanel({
     >
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-slate-900">Participantes & Pesos</h2>
+          <h2 className="text-lg font-bold text-slate-900">Participantes do Projeto</h2>
           <p className="text-sm text-slate-500">
-            Digite apenas um nome avulso ou vincule uma conta cadastrada (envia notificação por e-mail e adiciona à Home do usuário).
+            Digite apenas um nome avulso ou vincule uma conta cadastrada.
           </p>
         </div>
       </div>
 
       {canManageParticipants ? (
         <form onSubmit={handleSubmit} className="mb-6 space-y-3">
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <div className="flex-1">
-              <label htmlFor="participant-name-input" className="sr-only">
-                Nome do participante
-              </label>
-              <input
-                id="participant-name-input"
-                data-testid="participant-name-input"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Nome (ex: Primo Lucas ou selecione uma conta abaixo)"
-                className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="w-full sm:w-32">
-              <label htmlFor="participant-weight-input" className="sr-only">
-                Peso padrão
-              </label>
-              <div className="relative flex items-center">
-                <Scale className="pointer-events-none absolute left-3 h-4 w-4 text-slate-400" />
-                <input
-                  id="participant-weight-input"
-                  data-testid="participant-weight-input"
-                  type="number"
-                  step="0.5"
-                  min="0.5"
-                  value={weight}
-                  onChange={(e) => setWeight(e.target.value)}
-                  aria-label="Peso padrão do participante"
-                  className="w-full rounded-xl border border-slate-300 py-2 pr-3 pl-9 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
-                />
-              </div>
-            </div>
+          <div>
+            <label htmlFor="participant-name-input" className="sr-only">
+              Nome do participante
+            </label>
+            <input
+              id="participant-name-input"
+              data-testid="participant-name-input"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Nome (ex: Primo Lucas ou selecione uma conta abaixo)"
+              className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
+            />
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -159,7 +130,7 @@ export function ParticipantsPanel({
                   {participant.name.charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <p
                       data-testid={`participant-name-${participant.id}`}
                       className="font-semibold text-slate-900"
@@ -180,41 +151,20 @@ export function ParticipantsPanel({
                       </span>
                     )}
                   </div>
-                  <span className="text-xs text-slate-500">
-                    Peso padrão: {participant.defaultWeight}x
-                  </span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                  <span>Peso:</span>
-                  <input
-                    data-testid={`edit-weight-${participant.id}`}
-                    type="number"
-                    min="0.5"
-                    step="0.5"
-                    disabled={!canManageParticipants}
-                    value={participant.defaultWeight}
-                    onChange={(e) =>
-                      onUpdateParticipantWeight(participant.id, Number(e.target.value))
-                    }
-                    className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs font-medium text-slate-800 disabled:bg-slate-100"
-                  />
-                </label>
-
-                {canManageParticipants ? (
-                  <button
-                    data-testid={`remove-participant-${participant.id}`}
-                    type="button"
-                    onClick={() => onRemoveParticipant(participant.id)}
-                    aria-label={`Remover ${participant.name}`}
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                ) : null}
-              </div>
+              {canManageParticipants ? (
+                <button
+                  data-testid={`remove-participant-${participant.id}`}
+                  type="button"
+                  onClick={() => onRemoveParticipant(participant.id)}
+                  aria-label={`Remover ${participant.name}`}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>

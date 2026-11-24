@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import {
   applySettlementsToBalances,
   createSettlementRecord,
+  revertSettlementRecord,
   simplifyDebts,
 } from './debtSimplifier';
 import { DomainValidationError } from '../errors';
@@ -132,6 +133,12 @@ describe('Debt Simplifier & Settlement Engine', () => {
     expect(remainingTransfers).toEqual([
       { fromParticipantId: 'p_bruno', toParticipantId: 'p_alice', amountCents: 2500 },
     ]);
+
+    const afterUndo = revertSettlementRecord([settlement], 'set_1');
+    expect(afterUndo).toEqual([]);
+    expect(() => revertSettlementRecord([settlement], 'set_unknown')).toThrow(
+      DomainValidationError,
+    );
 
     expect(() =>
       simplifyDebts([
