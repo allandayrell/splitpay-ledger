@@ -20,6 +20,7 @@ import { formatBRL } from '../../../domain/money/money';
 import {
   categorizeProjectsForUserHome,
   getUserNetBalanceInProject,
+  getUserPendingTransfersInProject,
   isProjectOwner,
   resolveProjectStatus,
   type ProjectDateSortOrder,
@@ -119,6 +120,7 @@ export function ProjectsHomeView({
     const isOwner = isProjectOwner(group, currentUser.id);
     const status = resolveProjectStatus(project);
     const userNetCents = getUserNetBalanceInProject(project, currentUser);
+    const userPendingTransfers = getUserPendingTransfersInProject(project, currentUser);
     const isEditingThis = editingGroupId === group.id;
 
     return (
@@ -166,17 +168,17 @@ export function ProjectsHomeView({
                   {status === 'QUITE' ? 'Grupo: Quite' : 'Grupo: Acertos Pendentes'}
                 </span>
 
-                {userNetCents !== 0 ? (
+                {userPendingTransfers.length > 0 ? (
                   <span
                     className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                      userNetCents > 0
+                      userNetCents >= 0
                         ? 'bg-emerald-100 text-emerald-800'
                         : 'bg-rose-100 text-rose-800'
                     }`}
                   >
-                    {userNetCents > 0
-                      ? `A receber: +${formatBRL(userNetCents)}`
-                      : `A pagar: ${formatBRL(userNetCents)}`}
+                    {userNetCents >= 0
+                      ? `${userPendingTransfers.length} ${userPendingTransfers.length === 1 ? 'transferência' : 'transferências'} a receber (+${formatBRL(userNetCents)})`
+                      : `${userPendingTransfers.length} ${userPendingTransfers.length === 1 ? 'transferência' : 'transferências'} a pagar (${formatBRL(userNetCents)})`}
                   </span>
                 ) : null}
 
