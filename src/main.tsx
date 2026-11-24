@@ -481,9 +481,30 @@ function SplitPayApplication() {
         invitedByName: currentUser.name,
       });
 
+      const nextGroup = result.group;
+      const currentExpense = activeProject.expenses[0];
+      let nextExpenses = activeProject.expenses;
+      if (currentExpense && nextGroup.participants.length > 0) {
+        try {
+          const recalculatedSplits = calculateWeightedSharesSplit(
+            currentExpense.amountCents,
+            nextGroup.participants,
+            nextGroup.participants.map((pt) => ({
+              participantId: pt.id,
+              value: pt.defaultWeight,
+            })),
+          );
+          nextExpenses = [{ ...currentExpense, splits: recalculatedSplits }];
+        } catch {
+          nextExpenses = activeProject.expenses;
+        }
+      }
+
       setProjects((prev) =>
         prev.map((p) =>
-          p.group.id === activeProject.group.id ? { ...p, group: result.group } : p,
+          p.group.id === activeProject.group.id
+            ? { ...p, group: nextGroup, expenses: nextExpenses }
+            : p,
         ),
       );
 
@@ -658,24 +679,14 @@ function SplitPayApplication() {
     // Mantém saldo zero enquanto o usuário digita uma divisão exata incompleta
   }
 
-  const serializedActiveExpense = activeExpenseSnapshot
-    ? JSON.stringify(activeExpenseSnapshot)
-    : null;
-
-  useEffect(() => {
-    if (!activeGroupId || !serializedActiveExpense) return;
-    const parsedExpense = JSON.parse(serializedActiveExpense) as Expense;
+  function persistActiveExpenseSnapshot(targetGroupId: string, expenseToSave: Expense | null) {
+    if (!expenseToSave) return;
     setProjects((prev) =>
-      prev.map((proj) => {
-        if (proj.group.id !== activeGroupId) return proj;
-        const currentFirst = proj.expenses[0];
-        if (currentFirst && JSON.stringify(currentFirst) === serializedActiveExpense) {
-          return proj;
-        }
-        return { ...proj, expenses: [parsedExpense] };
-      }),
+      prev.map((proj) =>
+        proj.group.id === targetGroupId ? { ...proj, expenses: [expenseToSave] } : proj,
+      ),
     );
-  }, [activeGroupId, serializedActiveExpense]);
+  }
 
   let effectiveBalances = baseBalances;
   let transfers: TransferInstruction[] = [];
@@ -717,7 +728,13 @@ function SplitPayApplication() {
       const remaining = revertSettlementRecord(activeProject.settlements, settlementId);
       setProjects((prev) =>
         prev.map((p) =>
-          p.group.id === activeProject.group.id ? { ...p, settlements: remaining } : p,
+          p.group.id === activeProject.group.id
+            ? {
+                ...p,
+                expenses: activeExpenseSnapshot ? [activeExpenseSnapshot] : p.expenses,
+                settlements: remaining,
+              }
+            : p,
         ),
       );
       setFeedbackError(null);
@@ -734,6 +751,7 @@ function SplitPayApplication() {
             data-testid="back-to-home-btn"
             type="button"
             onClick={() => {
+              persistActiveExpenseSnapshot(group.id, activeExpenseSnapshot);
               setActiveGroupId(null);
               setFeedbackError(null);
               setFeedbackBanner(null);
