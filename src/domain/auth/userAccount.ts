@@ -1,0 +1,182 @@
+import { DomainValidationError } from '../errors';
+import type { UserAccount } from '../types';
+
+export interface RegisterUserInput {
+  id?: string;
+  name: string;
+  email: string;
+  password: string;
+  avatarUrl?: string;
+  createdAt?: string;
+}
+
+export interface UpdateUserProfileInput {
+  userId: string;
+  name?: string;
+  email?: string;
+  avatarUrl?: string;
+}
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function hashPassword(rawPassword: string): string {
+  return `hash_sp_${rawPassword}`;
+}
+
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+export function createSeededUsers(): UserAccount[] {
+  const timestamp = '2026-11-23T18:00:00.000Z';
+  return [
+    {
+      id: 'usr_allan',
+      name: 'Allan Dayrell',
+      email: 'allan.dayrell@gmail.com',
+      passwordHash: hashPassword('senha123'),
+      avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Allan+Dayrell',
+      createdAt: timestamp,
+    },
+    {
+      id: 'usr_warley',
+      name: 'Warley',
+      email: 'warley@splitpay.dev',
+      passwordHash: hashPassword('senha123'),
+      avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Warley',
+      createdAt: timestamp,
+    },
+    {
+      id: 'usr_alice',
+      name: 'Alice Silva',
+      email: 'alice@splitpay.dev',
+      passwordHash: hashPassword('senha123'),
+      avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Alice+Silva',
+      createdAt: timestamp,
+    },
+    {
+      id: 'usr_bruno',
+      name: 'Bruno Costa',
+      email: 'bruno@splitpay.dev',
+      passwordHash: hashPassword('senha123'),
+      avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Bruno+Costa',
+      createdAt: timestamp,
+    },
+    {
+      id: 'usr_carla',
+      name: 'Carla Souza',
+      email: 'carla@splitpay.dev',
+      passwordHash: hashPassword('senha123'),
+      avatarUrl: 'https://api.dicebear.com/9.x/initials/svg?seed=Carla+Souza',
+      createdAt: timestamp,
+    },
+  ];
+}
+
+export function registerUserAccount(
+  existingUsers: readonly UserAccount[],
+  input: RegisterUserInput,
+): UserAccount {
+  const trimmedName = input.name.trim();
+  if (trimmedName.length === 0) {
+    throw new DomainValidationError('EMPTY_USER_NAME', 'User name cannot be empty.');
+  }
+
+  const normalizedEmail = normalizeEmail(input.email);
+  if (!EMAIL_REGEX.test(normalizedEmail)) {
+    throw new DomainValidationError('INVALID_USER_EMAIL', 'User email format is invalid.');
+  }
+
+  if (input.password.length < 6) {
+    throw new DomainValidationError(
+      'WEAK_USER_PASSWORD',
+      'User password must contain at least 6 characters.',
+    );
+  }
+
+  const emailTaken = existingUsers.some(
+    (user) => normalizeEmail(user.email) === normalizedEmail,
+  );
+  if (emailTaken) {
+    throw new DomainValidationError(
+      'DUPLICATE_USER_EMAIL',
+      `An account with email "${normalizedEmail}" is already registered.`,
+    );
+  }
+
+  return {
+    id: input.id ?? `usr_${Date.now()}`,
+    name: trimmedName,
+    email: normalizedEmail,
+    passwordHash: hashPassword(input.password),
+    avatarUrl:
+      input.avatarUrl?.trim() ||
+      `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(trimmedName)}`,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export function authenticateUser(
+  users: readonly UserAccount[],
+  email: string,
+  password: string,
+): UserAccount {
+  const normalizedTarget = normalizeEmail(email);
+  const candidate = users.find((u) => normalizeEmail(u.email) === normalizedTarget);
+
+  if (!candidate || candidate.passwordHash !== hashPassword(password)) {
+    throw new DomainValidationError(
+      'INVALID_CREDENTIALS',
+      'Invalid email or password.',
+    );
+  }
+
+  return candidate;
+}
+
+export function updateUserProfile(
+  users: readonly UserAccount[],
+  input: UpdateUserProfileInput,
+): UserAccount[] {
+  const target = users.find((u) => u.id === input.userId);
+  if (!target) {
+    throw new DomainValidationError('USER_NOT_FOUND', 'User account was not found.');
+  }
+
+  const nextName = input.name !== undefined ? input.name.trim() : target.name;
+  if (nextName.length === 0) {
+    throw new DomainValidationError('EMPTY_USER_NAME', 'User name cannot be empty.');
+  }
+
+  const nextEmail =
+    input.email !== undefined ? normalizeEmail(input.email) : target.email;
+  if (!EMAIL_REGEX.test(nextEmail)) {
+    throw new DomainValidationError('INVALID_USER_EMAIL', 'User email format is invalid.');
+  }
+
+  const emailConflict = users.some(
+    (u) => u.id !== input.userId && normalizeEmail(u.email) === nextEmail,
+  );
+  if (emailConflict) {
+    throw new DomainValidationError(
+      'DUPLICATE_USER_EMAIL',
+      `Email "${nextEmail}" is already used by another account.`,
+    );
+  }
+
+  const nextAvatar =
+    input.avatarUrl !== undefined ? input.avatarUrl.trim() : target.avatarUrl;
+
+  return users.map((user) =>
+    user.id === input.userId
+      ? {
+          ...user,
+          name: nextName,
+          email: nextEmail,
+          avatarUrl:
+            nextAvatar ||
+            `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(nextName)}`,
+        }
+      : user,
+  );
+}
