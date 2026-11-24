@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import fc from 'fast-check';
 import {
   applySettlementsToBalances,
   createSettlementRecord,
@@ -176,5 +177,45 @@ describe('Debt Simplifier & Settlement Engine', () => {
       applySettlementsToBalances(initialBalances, [{ ...settlement, amountCents: 0 }]),
     ).toThrow(DomainValidationError);
   });
+
+  it('produces at most N-1 positive transfers that completely zero out all balances for any zero-sum balance vector', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: -500_000, max: 500_000 }), { minLength: 2, maxLength: 15 }),
+        (rawValues) => {
+          const partialSum = rawValues.slice(0, -1).reduce((acc, v) => acc + v, 0);
+          const zeroSumVector = [...rawValues.slice(0, -1), -partialSum];
+
+          const balances = zeroSumVector.map((netBalanceCents, idx) => ({
+            participantId: `p_${String(idx + 1).padStart(2, '0')}`,
+            netBalanceCents,
+          }));
+
+          const transfers = simplifyDebts(balances);
+
+          if (transfers.length > balances.length - 1) {
+            return false;
+          }
+
+          const simulatedSettlements = transfers.map((t, index) => ({
+            id: `set_${index}`,
+            groupId: 'grp_prop',
+            fromParticipantId: t.fromParticipantId,
+            toParticipantId: t.toParticipantId,
+            amountCents: t.amountCents,
+            createdAt: '2026-11-24T10:00:00.000Z',
+          }));
+
+          const postSettlementBalances = applySettlementsToBalances(
+            balances,
+            simulatedSettlements,
+          );
+
+          return postSettlementBalances.every((entry) => entry.netBalanceCents === 0);
+        },
+      ),
+    );
+  });
 });
+
 
