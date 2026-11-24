@@ -12,10 +12,34 @@ export type ExpenseCategory =
   | 'ENTERTAINMENT'
   | 'OTHER';
 
+export interface UserAccount {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  avatarUrl?: string;
+  createdAt: string;
+}
+
+export interface EmailNotification {
+  id: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  subject: string;
+  body: string;
+  groupId: string;
+  groupName: string;
+  invitedByName: string;
+  read: boolean;
+  createdAt: string;
+}
+
 export interface Participant {
   id: string;
   name: string;
   defaultWeight: number;
+  userId?: string;
+  email?: string;
 }
 
 export interface ExpensePayer {
@@ -61,6 +85,7 @@ export interface Group {
   id: string;
   name: string;
   baseCurrency: CurrencyCode;
+  ownerUserId?: string;
   participants: Participant[];
   createdAt: string;
 }

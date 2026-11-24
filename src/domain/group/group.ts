@@ -5,6 +5,7 @@ export interface CreateGroupInput {
   id?: string;
   name: string;
   baseCurrency?: CurrencyCode;
+  ownerUserId?: string;
   createdAt?: string;
 }
 
@@ -12,6 +13,8 @@ export interface AddParticipantInput {
   id?: string;
   name: string;
   defaultWeight?: number;
+  userId?: string;
+  email?: string;
 }
 
 export interface UpdateParticipantInput {
@@ -39,13 +42,19 @@ export function createGroup(input: CreateGroupInput): Group {
     throw new DomainValidationError('EMPTY_GROUP_NAME', 'Group name cannot be empty.');
   }
 
-  return {
+  const group: Group = {
     id: input.id ?? `grp_${Date.now()}`,
     name: trimmedName,
     baseCurrency: input.baseCurrency ?? 'BRL',
     participants: [],
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
+
+  if (input.ownerUserId !== undefined) {
+    group.ownerUserId = input.ownerUserId;
+  }
+
+  return group;
 }
 
 export function updateGroupName(group: Group, newName: string): Group {
@@ -67,8 +76,15 @@ export function addParticipant(group: Group, input: AddParticipantInput): Group 
   }
 
   const normalizedTarget = normalizeName(trimmedName);
+  const normalizedEmail = input.email ? normalizeName(input.email) : undefined;
+
   const hasDuplicate = group.participants.some(
-    (existing) => normalizeName(existing.name) === normalizedTarget,
+    (existing) =>
+      normalizeName(existing.name) === normalizedTarget ||
+      (input.userId !== undefined && existing.userId === input.userId) ||
+      (normalizedEmail !== undefined &&
+        existing.email !== undefined &&
+        normalizeName(existing.email) === normalizedEmail),
   );
 
   if (hasDuplicate) {
@@ -86,6 +102,13 @@ export function addParticipant(group: Group, input: AddParticipantInput): Group 
     name: trimmedName,
     defaultWeight,
   };
+
+  if (input.userId !== undefined) {
+    participant.userId = input.userId;
+  }
+  if (input.email !== undefined && input.email.trim().length > 0) {
+    participant.email = input.email.trim().toLowerCase();
+  }
 
   return {
     ...group,
