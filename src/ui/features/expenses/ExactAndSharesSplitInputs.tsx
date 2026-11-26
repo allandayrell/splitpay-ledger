@@ -1,12 +1,13 @@
 import { AlertCircle, CheckCircle2, Scale } from 'lucide-react';
-import { formatBRL } from '../../../domain/money/money';
+import { formatCurrency } from '../../../domain/money/money';
 import { calculateExpenseSplit } from '../../../domain/split/splitEngine';
-import type { Cents, ExpenseSplit, Participant, SplitType } from '../../../domain/types';
+import type { Cents, CurrencyCode, ExpenseSplit, Participant, SplitType } from '../../../domain/types';
 import { buildSplitInputs, splitModeLabels } from './expenseSplitForm';
 
 export type AdvancedSplitMode = SplitType;
 
 export interface ExactAndSharesSplitInputsProps {
+  currency: CurrencyCode;
   mode: AdvancedSplitMode;
   totalAmountCents: Cents;
   participants: readonly Participant[];
@@ -17,6 +18,7 @@ export interface ExactAndSharesSplitInputsProps {
 }
 
 export function ExactAndSharesSplitInputs({
+  currency,
   mode,
   totalAmountCents,
   participants,
@@ -30,7 +32,7 @@ export function ExactAndSharesSplitInputs({
 
   try {
     if (totalAmountCents <= 0) {
-      validationError = 'Informe um valor total da despesa maior que R$ 0,00.';
+      validationError = 'Informe um valor total da despesa maior que zero.';
     } else {
       const inputs = buildSplitInputs(mode, participants, valuesByParticipant, excludedParticipantIds);
       previewSplits = calculateExpenseSplit(totalAmountCents, participants, mode, inputs);
@@ -48,7 +50,7 @@ export function ExactAndSharesSplitInputs({
           <Scale className="h-4 w-4 text-indigo-600" />
           {splitModeLabels[mode]}
         </span>
-        <span>Total da Despesa: {formatBRL(Math.max(0, totalAmountCents))}</span>
+        <span>Total da Despesa {formatCurrency(Math.max(0, totalAmountCents), currency)}</span>
       </div>
 
       <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
@@ -78,13 +80,13 @@ export function ExactAndSharesSplitInputs({
                   data-testid={`split-preview-amount-${participant.id}`}
                   className="text-xs text-slate-500"
                 >
-                  Cota calculada: <strong className="text-slate-700">{formatBRL(calculatedCents)}</strong>
+                  Cota calculada <strong className="text-slate-700">{formatCurrency(calculatedCents, currency)}</strong>
                 </p>
               </div>
 
               {mode !== 'EQUAL' && <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-slate-500">
-                  {mode === 'EXACT' ? 'R$' : mode === 'PERCENTAGE' ? '%' : 'Peso'}
+                  {mode === 'EXACT' ? currency : mode === 'PERCENTAGE' ? '%' : 'Peso'}
                 </span>
                 <input
                   data-testid={`split-input-${mode.toLowerCase()}-${participant.id}`}
@@ -122,7 +124,7 @@ export function ExactAndSharesSplitInputs({
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           <span>
             Divisão válida. Soma total distribuída{' '}
-            {formatBRL(totalAmountCents)}.
+            {formatCurrency(totalAmountCents, currency)}.
           </span>
         </div>
       )}

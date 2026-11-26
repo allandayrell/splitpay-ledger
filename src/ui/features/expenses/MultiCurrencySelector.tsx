@@ -10,6 +10,7 @@ export interface MultiCurrencySelectorProps {
   rawAmount: string;
   currency: CurrencyCode;
   rawExchangeRate: string;
+  amountInputId?: string;
   onChangeAmount: (value: string) => void;
   onChangeCurrency: (currency: CurrencyCode) => void;
   onChangeExchangeRate: (rate: string) => void;
@@ -26,17 +27,19 @@ export function MultiCurrencySelector({
   rawAmount,
   currency,
   rawExchangeRate,
+  amountInputId = 'expense-amount-input',
   onChangeAmount,
   onChangeCurrency,
   onChangeExchangeRate,
 }: MultiCurrencySelectorProps) {
   let convertedPreview: string | null = null;
   let originalBadge: string | null = null;
+  let validationMessage: string | null = null;
 
   try {
-    const rawCents = toCents(rawAmount);
-    if (rawCents > 0) {
-      const rate = currency === 'BRL' ? undefined : Number(rawExchangeRate);
+    if (rawAmount.trim()) {
+      const rawCents = toCents(rawAmount);
+      const rate = currency === 'BRL' ? undefined : Number(rawExchangeRate.replace(',', '.'));
       const normalized = normalizeExpenseCurrencyAmount({
         amountCents: rawCents,
         currency,
@@ -52,7 +55,9 @@ export function MultiCurrencySelector({
       }
     }
   } catch {
-    convertedPreview = null;
+    if (currency !== 'BRL') {
+      validationMessage = 'Informe um valor e uma taxa de câmbio positivos que resultem em pelo menos um centavo.';
+    }
   }
 
   return (
@@ -90,14 +95,14 @@ export function MultiCurrencySelector({
 
         <div>
           <label
-            htmlFor="expense-amount-input"
+            htmlFor={amountInputId}
             className="mb-1 block text-xs font-medium text-slate-600"
           >
             Valor ({currency})
           </label>
           <input
-            id="expense-amount-input"
-            data-testid="expense-amount-input"
+            id={amountInputId}
+            data-testid={amountInputId}
             type="number"
             step="0.01"
             min="0.01"
@@ -120,8 +125,8 @@ export function MultiCurrencySelector({
               id="expense-exchange-rate-input"
               data-testid="expense-exchange-rate-input"
               type="number"
-              step="0.01"
-              min="0.01"
+              step="any"
+              min="0"
               value={rawExchangeRate}
               onChange={(e) => onChangeExchangeRate(e.target.value)}
               placeholder="5.50"
@@ -131,7 +136,8 @@ export function MultiCurrencySelector({
         ) : null}
       </div>
 
-      {convertedPreview ? (
+      {validationMessage && <p role="alert" className="text-xs text-rose-700">{validationMessage}</p>}
+      {convertedPreview && currency !== 'BRL' ? (
         <div
           data-testid="currency-conversion-preview"
           className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-900"

@@ -24,7 +24,11 @@ import {
 } from './domain/auth/userAccount';
 import { removeParticipant, updateParticipant } from './domain/group/group';
 import { removeExpense, saveExpense } from './domain/ledger/balanceCalculator';
-import { formatBRL, toCents } from './domain/money/money';
+import {
+  normalizeExpenseCurrencyAmount,
+  type NormalizedExpenseAmount,
+} from './domain/ledger/multiCurrencyExpense';
+import { formatCurrency, toCents } from './domain/money/money';
 import {
   createSettlementForTransfer,
   revertSettlementRecord,
@@ -58,6 +62,7 @@ import {
 } from './ui/features/expenses/ExactAndSharesSplitInputs';
 import { buildSplitInputs, restoreSplitForm, splitModeLabels } from './ui/features/expenses/expenseSplitForm';
 import { ExpenseRecordsPanel, expenseCategoryLabels } from './ui/features/expenses/ExpenseRecordsPanel';
+import { MultiCurrencySelector } from './ui/features/expenses/MultiCurrencySelector';
 import { GroupHeader } from './ui/features/groups/GroupHeader';
 import { ParticipantsPanel } from './ui/features/groups/ParticipantsPanel';
 import { ProjectsHomeView } from './ui/features/workspace/ProjectsHomeView';
@@ -68,6 +73,19 @@ import {
 
 const workspaceStorage = createLocalStorageRepository(() => window.localStorage);
 const defaultDraftAmount = '100.00';
+
+function readExpenseAmount(
+  rawAmount: string,
+  currency: CurrencyCode,
+  rawRate: string,
+  baseCurrency: CurrencyCode,
+): NormalizedExpenseAmount {
+  const amountCents = toCents(rawAmount);
+  if (baseCurrency !== 'BRL') return { amountCents, currency: baseCurrency };
+
+  const exchangeRate = currency !== 'BRL' ? Number(rawRate.replace(',', '.')) : undefined;
+  return normalizeExpenseCurrencyAmount({ amountCents, currency, exchangeRate });
+}
 
 function buildInitialWorkspace(users: readonly UserAccount[]): {
   projects: GroupLedgerState[];
@@ -197,6 +215,8 @@ function SplitPayApplication() {
   const [expenseDescription, setExpenseDescription] = useState('');
   const [expenseCategory, setExpenseCategory] = useState<ExpenseCategory>('OTHER');
   const [rawAmount, setRawAmount] = useState(defaultDraftAmount);
+  const [expenseCurrency, setExpenseCurrency] = useState<CurrencyCode>('BRL');
+  const [rawExchangeRate, setRawExchangeRate] = useState('');
   const [selectedPayerIds, setSelectedPayerIds] = useState<string[]>([]);
   const [payerToAddId, setPayerToAddId] = useState<string>('');
   const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({});
@@ -288,7 +308,10 @@ function SplitPayApplication() {
     setExpenseDescription(expense?.description ?? (startBlank ? '' : 'Conta Principal do Grupo'));
     setExpenseCategory(expense?.category ?? 'OTHER');
     if (expense) {
-      setRawAmount((expense.amountCents / 100).toFixed(2));
+      const original = project.group.baseCurrency === 'BRL' ? expense.originalAmountCents : undefined;
+      setRawAmount(((original ?? expense.amountCents) / 100).toFixed(2));
+      setExpenseCurrency(original === undefined ? project.group.baseCurrency : expense.currency);
+      setRawExchangeRate(original === undefined ? '' : expense.exchangeRate?.toString() ?? '');
       setSelectedPayerIds(expense.payers.map(({ participantId }) => participantId));
       setPayerAmounts(Object.fromEntries(
         expense.payers.map(({ participantId, amountCents }) => [participantId, (amountCents / 100).toFixed(2)]),
@@ -301,6 +324,8 @@ function SplitPayApplication() {
       const firstParticipantId = project.group.participants[0]?.id;
       const amount = startBlank ? '' : defaultDraftAmount;
       setRawAmount(amount);
+      setExpenseCurrency(project.group.baseCurrency);
+      setRawExchangeRate('');
       setSelectedPayerIds(firstParticipantId ? [firstParticipantId] : []);
       setPayerAmounts(firstParticipantId ? { [firstParticipantId]: amount } : {});
       setSplitMode('SHARES');
@@ -510,6 +535,23 @@ function SplitPayApplication() {
     }
   }
 
+  function updateExpenseMoney(amount: string, currency: CurrencyCode, rate: string) {
+    setExpenseDraftChanged(true);
+    setRawAmount(amount);
+    setExpenseCurrency(currency);
+    setRawExchangeRate(rate);
+    const singlePayer = selectedPayerIds.length === 1 ? selectedPayerIds[0] : undefined;
+    if (!singlePayer) return;
+    let paid = '';
+    try {
+      const normalized = readExpenseAmount(amount, currency, rate, group.baseCurrency);
+      paid = normalized.amountCents > 0 ? (normalized.amountCents / 100).toFixed(2) : '';
+    } catch {
+      // Um pagador único acompanha o valor convertido assim que o câmbio for válido.
+    }
+    setPayerAmounts((prev) => ({ ...prev, [singlePayer]: paid }));
+  }
+
   const availablePayersToAdd = group.participants.filter(
     (p) => !selectedPayerIds.includes(p.id),
   );
@@ -522,7 +564,7 @@ function SplitPayApplication() {
       if (next.length === 1) {
         setPayerAmounts((prevAmounts) => ({
           ...prevAmounts,
-          [participantId]: rawAmount,
+          [participantId]: formattedBaseAmount,
         }));
       } else {
         setPayerAmounts((prevAmounts) => ({
@@ -543,19 +585,21 @@ function SplitPayApplication() {
         const remainingId = next[0];
         setPayerAmounts((prevAmounts) => ({
           ...prevAmounts,
-          [remainingId]: rawAmount,
+          [remainingId]: formattedBaseAmount,
         }));
       }
       return next;
     });
   }
 
-  let totalExpenseCents = 0;
+  let normalizedAmount: NormalizedExpenseAmount | undefined;
   try {
-    totalExpenseCents = Math.max(0, toCents(rawAmount));
+    normalizedAmount = readExpenseAmount(rawAmount, expenseCurrency, rawExchangeRate, group.baseCurrency);
   } catch {
-    totalExpenseCents = 0;
+    // Sem total até que o valor e o câmbio sejam válidos.
   }
+  const totalExpenseCents = Math.max(0, normalizedAmount?.amountCents ?? 0);
+  const formattedBaseAmount = totalExpenseCents > 0 ? (totalExpenseCents / 100).toFixed(2) : '';
 
   const paidCentsByParticipant = new Map<string, number>();
   let totalPaidCents = 0;
@@ -584,6 +628,9 @@ function SplitPayApplication() {
     totalExpenseCents > 0 &&
     selectedPayerIds.length > 0 &&
     totalPaidCents === totalExpenseCents;
+  const formattedPaid = Number.isSafeInteger(totalPaidCents)
+    ? formatCurrency(totalPaidCents, group.baseCurrency)
+    : '—';
 
   const storedExpense = activeProject.expenses.find(({ id }) => id === expenseDraftId);
   let activeExpenseSnapshot: Expense | null = !expenseDraftChanged && storedExpense ? storedExpense : null;
@@ -591,7 +638,7 @@ function SplitPayApplication() {
   let draftError = '';
 
   try {
-    if (!activeExpenseSnapshot && payersSumMatchesTotal && group.participants.length > 0) {
+    if (!activeExpenseSnapshot && normalizedAmount && payersSumMatchesTotal && group.participants.length > 0) {
       const splitInputs = buildSplitInputs(splitMode, group.participants, valuesByParticipant, excludedParticipantIds);
       const splits = calculateExpenseSplit(totalExpenseCents, group.participants, splitMode, splitInputs);
       const payers = selectedPayerIds
@@ -607,7 +654,9 @@ function SplitPayApplication() {
         description: expenseDescription,
         category: expenseCategory,
         amountCents: totalExpenseCents,
-        currency: storedExpense?.currency ?? group.baseCurrency,
+        currency: normalizedAmount.currency,
+        originalAmountCents: normalizedAmount.originalAmountCents,
+        exchangeRate: normalizedAmount.exchangeRate,
         payers,
         splitType: splitMode,
         splitInputs,
@@ -835,7 +884,7 @@ function SplitPayApplication() {
                         }`}
                       >
                         {b.netBalanceCents > 0 ? '+' : ''}
-                        {formatBRL(b.netBalanceCents)}
+                        {formatCurrency(b.netBalanceCents, group.baseCurrency)}
                       </span>
                     </li>
                   );
@@ -915,32 +964,37 @@ function SplitPayApplication() {
                 </label>
               </div>
 
-              <div>
-                <label
-                  htmlFor="expense-total-input"
-                  className="mb-1 block text-xs font-bold tracking-wider text-slate-600 uppercase"
-                >
-                  Valor Total da Conta ({group.baseCurrency})
-                </label>
-                <input
-                  id="expense-total-input"
-                  data-testid="expense-total-input"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={rawAmount}
-                  onChange={(e) => {
-                    const nextVal = e.target.value;
-                    setExpenseDraftChanged(true);
-                    setRawAmount(nextVal);
-                    if (selectedPayerIds.length === 1 && selectedPayerIds[0]) {
-                      setPayerAmounts((prev) => ({ ...prev, [selectedPayerIds[0]!]: nextVal }));
-                    }
-                  }}
-                  placeholder="100.00"
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-base font-bold text-slate-900 focus:border-indigo-500 focus:outline-none"
+              {group.baseCurrency === 'BRL' ? (
+                <MultiCurrencySelector
+                  amountInputId="expense-total-input"
+                  rawAmount={rawAmount}
+                  currency={expenseCurrency}
+                  rawExchangeRate={rawExchangeRate}
+                  onChangeAmount={(amount) => updateExpenseMoney(amount, expenseCurrency, rawExchangeRate)}
+                  onChangeCurrency={(currency) => updateExpenseMoney(rawAmount, currency, rawExchangeRate)}
+                  onChangeExchangeRate={(rate) => updateExpenseMoney(rawAmount, expenseCurrency, rate)}
                 />
-              </div>
+              ) : (
+                <div>
+                  <label
+                    htmlFor="expense-total-input"
+                    className="mb-1 block text-xs font-bold tracking-wider text-slate-600 uppercase"
+                  >
+                    Valor Total da Conta ({group.baseCurrency})
+                  </label>
+                  <input
+                    id="expense-total-input"
+                    data-testid="expense-total-input"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={rawAmount}
+                    onChange={(event) => updateExpenseMoney(event.target.value, expenseCurrency, rawExchangeRate)}
+                    placeholder="100.00"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-base font-bold text-slate-900 focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              )}
 
               <div data-testid="multi-payers-section" className="space-y-3">
                 <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
@@ -948,7 +1002,7 @@ function SplitPayApplication() {
                     Quem pagou a conta?
                   </span>
                   <span className="text-xs font-semibold text-slate-500">
-                    Soma paga: {formatBRL(totalPaidCents)} / {formatBRL(totalExpenseCents)}
+                    Soma paga {formattedPaid} / {formatCurrency(totalExpenseCents, group.baseCurrency)}
                   </span>
                 </div>
 
@@ -1015,7 +1069,7 @@ function SplitPayApplication() {
                           </div>
 
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-slate-500">Pagou R$:</span>
+                            <span className="text-xs font-medium text-slate-500">Pagou ({group.baseCurrency})</span>
                             <input
                               data-testid={`payer-amount-input-${participant.id}`}
                               type="number"
@@ -1056,8 +1110,8 @@ function SplitPayApplication() {
                   >
                     <AlertCircle className="h-4 w-4 shrink-0" />
                     <span>
-                      A soma dos valores pagos ({formatBRL(totalPaidCents)}) deve ser igual ao total
-                      da conta ({formatBRL(totalExpenseCents)}).
+                      A soma dos valores pagos ({formattedPaid}) deve ser igual ao total
+                      da conta ({formatCurrency(totalExpenseCents, group.baseCurrency)}).
                     </span>
                   </div>
                 ) : (
@@ -1072,6 +1126,7 @@ function SplitPayApplication() {
               </div>
 
               <ExactAndSharesSplitInputs
+                currency={group.baseCurrency}
                 mode={splitMode}
                 totalAmountCents={totalExpenseCents}
                 participants={group.participants}
@@ -1113,6 +1168,7 @@ function SplitPayApplication() {
             </section>
 
             <TransferPlanPanel
+              currency={group.baseCurrency}
               participants={group.participants}
               transfers={transfers}
               settlements={settlements}

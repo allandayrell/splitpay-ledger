@@ -1,13 +1,15 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, CheckCircle2, HandCoins, History, RotateCcw } from 'lucide-react';
-import { formatBRL, toCents } from '../../../domain/money/money';
+import { formatCurrency, toCents } from '../../../domain/money/money';
 import type {
+  CurrencyCode,
   Participant,
   SettlementRecord,
   TransferInstruction,
 } from '../../../domain/types';
 
 export interface TransferPlanPanelProps {
+  currency: CurrencyCode;
   participants: readonly Participant[];
   transfers: readonly TransferInstruction[];
   settlements: readonly SettlementRecord[];
@@ -17,6 +19,7 @@ export interface TransferPlanPanelProps {
 }
 
 export function TransferPlanPanel({
+  currency,
   participants,
   transfers,
   settlements,
@@ -108,7 +111,7 @@ export function TransferPlanPanel({
                       data-testid={`transfer-amount-${transfer.fromParticipantId}-${transfer.toParticipantId}`}
                       className="rounded-lg bg-white px-2.5 py-1 font-extrabold text-slate-900 shadow-2xs"
                     >
-                      {formatBRL(transfer.amountCents)}
+                      {formatCurrency(transfer.amountCents, currency)}
                     </span>
                     <ArrowRight className="h-4 w-4 text-slate-400" />
                     <span className="text-slate-500">para</span>
@@ -184,7 +187,7 @@ export function TransferPlanPanel({
                 </span>
                 <div className="flex items-center gap-2.5">
                   <span className="font-bold text-emerald-700">
-                    {formatBRL(settlement.amountCents)}
+                    {formatCurrency(settlement.amountCents, currency)}
                   </span>
                   {onRevertSettlement ? (
                     <button
