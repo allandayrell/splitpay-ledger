@@ -141,6 +141,20 @@ export function createSettlementRecord(
   };
 }
 
+export function createSettlementForTransfer(
+  group: Group,
+  transfer: TransferInstruction,
+  amountCents = transfer.amountCents,
+): SettlementRecord {
+  if (amountCents > transfer.amountCents) {
+    throw new DomainValidationError(
+      'SETTLEMENT_EXCEEDS_TRANSFER',
+      'O pagamento não pode ultrapassar o valor da transferência pendente.',
+    );
+  }
+  return createSettlementRecord(group, { ...transfer, groupId: group.id, amountCents });
+}
+
 export function applySettlementsToBalances(
   balances: readonly ParticipantBalanceEntry[],
   settlements: readonly SettlementRecord[],

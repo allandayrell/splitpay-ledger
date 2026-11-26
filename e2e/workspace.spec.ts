@@ -281,3 +281,26 @@ test('edita o nome de um participante preservando o vínculo e as transferência
   await page.getByTestId(openCapitolio).click();
   await expect(participant.getByTestId('participant-name-p_warley_1')).toHaveText('Warley da viagem');
 });
+
+test('registra, restaura e reverte uma quitação parcial sem exceder a dívida', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  const transfer = page.getByTestId(`transfer-item-p_warley_1-${ownerParticipantId}`);
+  await transfer.getByRole('button', { name: 'Registrar parte' }).click();
+  const amount = transfer.getByRole('spinbutton', { name: 'Valor do pagamento parcial' });
+  const register = transfer.getByRole('button', { name: 'Registrar pagamento' });
+  await amount.fill('40');
+  await register.click();
+  await expect(transfer.getByRole('alert')).toContainText('não pode ultrapassar');
+  await expect(page.getByTestId('settlements-history')).toHaveCount(0);
+
+  await amount.fill('10');
+  await register.click();
+  await expect(transfer).toContainText('R$ 23,33');
+  await expect(page.getByTestId('settlements-history')).toContainText('R$ 10,00');
+  await page.getByTestId('back-to-home-btn').click();
+  await page.reload();
+  await page.getByTestId(openCapitolio).click();
+  await expect(transfer).toContainText('R$ 23,33');
+  await page.getByTestId('settlements-history').getByRole('button', { name: 'Voltar', exact: true }).click();
+  await expect(transfer).toContainText('R$ 33,33');
+});
