@@ -14,6 +14,11 @@ const participants: Participant[] = [
 ];
 
 describe('Multi-Currency Expense Domain Support', () => {
+  it('rejects a foreign expense too small to represent in base currency', () => {
+    expect(() => normalizeExpenseCurrencyAmount({ amountCents: 1, currency: 'USD', exchangeRate: 0.1 }))
+      .toThrow(expect.objectContaining({ code: 'CONVERTED_EXPENSE_TOO_SMALL' }));
+  });
+
   it('keeps domestic BRL expense amount unchanged without exchange rate metadata', () => {
     const normalized = normalizeExpenseCurrencyAmount({
       amountCents: 15000,

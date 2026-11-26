@@ -1,3 +1,4 @@
+import { isCurrencyCode } from '../domain/money/money';
 import type { EmailNotification, ExpensePayer, GroupLedgerState, UserAccount } from '../domain/types';
 
 export const WORKSPACE_STORAGE_KEY = 'splitpay_ledger_workspace_v1';
@@ -40,6 +41,7 @@ function isWorkspaceSnapshot(value: unknown): value is PersistedWorkspaceSnapsho
       (project) =>
         typeof project?.group?.id === 'string' &&
         typeof project.group.name === 'string' &&
+        isCurrencyCode(project.group.baseCurrency) &&
         Array.isArray(project.group.participants) &&
         project.group.participants.every(
           (participant) => typeof participant?.id === 'string' && typeof participant.name === 'string',

@@ -78,6 +78,10 @@ describe('Workspace storage', () => {
       ...snapshot,
       projects: [{ ...project, group: { ...project.group, name: null } }],
     })],
+    ['unknown base currency', JSON.stringify({
+      ...snapshot,
+      projects: [{ ...project, group: { ...project.group, baseCurrency: 'invalid' } }],
+    })],
     ['invalid participants', JSON.stringify({
       ...snapshot,
       projects: [{ ...project, group: { ...project.group, participants: null } }],
