@@ -119,3 +119,46 @@ test('preserva dados armazenados quando o projeto local não pode ser lido', asy
   expect(await page.evaluate(() => localStorage.getItem('splitpay_ledger_workspace_v1')))
     .toBe(damagedSnapshot);
 });
+
+test('divide um subconjunto e exige 100% ao trocar para porcentagem', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  await page.getByRole('button', { name: 'Igualitária' }).click();
+  await page.getByRole('checkbox', { name: 'Incluir Carla Souza no rateio' }).uncheck();
+
+  const transfers = page.getByTestId('transfer-instructions-list');
+  await expect(transfers.getByRole('listitem')).toHaveCount(1);
+  await expect(transfers).toContainText('R$ 50,00');
+
+  await page.getByRole('button', { name: 'Porcentagem' }).click();
+  await page.getByTestId(`split-input-percentage-${ownerParticipantId}`).fill('50');
+  await page.getByTestId('split-input-percentage-p_warley_1').fill('60');
+  await expect(page.getByTestId('advanced-split-error')).toContainText('A soma das porcentagens deve ser 100%');
+  await expect(page.getByTestId('transfer-instructions-list')).toHaveCount(0);
+
+  await page.getByTestId('split-input-percentage-p_warley_1').fill('50');
+  await expect(page.getByTestId('advanced-split-valid')).toBeVisible();
+  await page.getByTestId('back-to-home-btn').click();
+  await page.reload();
+  await page.getByTestId(openCapitolio).click();
+
+  await expect(page.getByRole('button', { name: 'Porcentagem' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('checkbox', { name: 'Incluir Carla Souza no rateio' })).not.toBeChecked();
+  await expect(transfers).toContainText('R$ 50,00');
+});
+
+test('mantém os pesos da conta gravada ao reabrir e adicionar participante', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  const ownerWeight = page.getByTestId(`split-input-shares-${ownerParticipantId}`);
+  await ownerWeight.fill('2');
+  const transfers = page.getByTestId('transfer-instructions-list');
+  await expect(transfers.getByRole('listitem').filter({ hasText: 'Warley' })).toContainText('R$ 25,00');
+  await page.getByTestId('back-to-home-btn').click();
+  await page.reload();
+  await page.getByTestId(openCapitolio).click();
+
+  await expect(ownerWeight).toHaveValue('2');
+  await page.getByTestId('participant-name-input').fill('Diana');
+  await page.getByTestId('add-participant-btn').click();
+  await expect(transfers.getByRole('listitem')).toHaveCount(2);
+  await expect(transfers.getByRole('listitem').filter({ hasText: 'Warley' })).toContainText('R$ 25,00');
+});
