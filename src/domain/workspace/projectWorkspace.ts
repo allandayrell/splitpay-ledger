@@ -1,8 +1,8 @@
 import { normalizeEmail } from '../auth/userAccount';
 import { DomainValidationError } from '../errors';
+import { calculateLedgerBalances } from '../ledger/balanceCalculator';
 import { addParticipant, createGroup, updateGroupName } from '../group/group';
 import {
-  applySettlementsToBalances,
   simplifyDebts,
   type ParticipantBalanceEntry,
 } from '../settlement/debtSimplifier';
@@ -95,36 +95,10 @@ export type ProjectGroupStatus = 'QUITE' | 'PENDENTE' | 'INCONSISTENTE';
 export function calculateProjectEffectiveBalances(
   project: GroupLedgerState,
 ): ParticipantBalanceEntry[] {
-  const netMap = new Map<string, number>();
-  for (const participant of project.group.participants) {
-    netMap.set(participant.id, 0);
-  }
-
-  function adjustBalance(participantId: string, difference: Cents) {
-    const balance = netMap.get(participantId);
-    if (balance === undefined) {
-      throw new DomainValidationError(
-        'UNKNOWN_EXPENSE_PARTICIPANT',
-        'Expense references a participant outside the project.',
-      );
-    }
-    netMap.set(participantId, balance + difference);
-  }
-
-  for (const expense of project.expenses) {
-    for (const payer of expense.payers) {
-      adjustBalance(payer.participantId, payer.amountCents);
-    }
-    for (const split of expense.splits) {
-      adjustBalance(split.participantId, -split.amountCents);
-    }
-  }
-
-  const baseBalances = Array.from(netMap, ([participantId, netBalanceCents]) => ({
+  return calculateLedgerBalances(project).map(({ participantId, netBalanceCents }) => ({
     participantId,
     netBalanceCents,
   }));
-  return applySettlementsToBalances(baseBalances, project.settlements);
 }
 
 export function getProjectTransferPlan(project: GroupLedgerState): TransferInstruction[] {
