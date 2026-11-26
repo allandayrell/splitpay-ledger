@@ -259,3 +259,25 @@ test('filtra despesas, baixa relatórios e restaura as despesas após recarregar
   await expect(records.getByRole('listitem')).toHaveCount(2);
   await expect(page.getByTestId('expense-total-spent')).toHaveText('R$ 160,00');
 });
+
+test('edita o nome de um participante preservando o vínculo e as transferências', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  const participant = page.getByTestId('participant-item-p_warley_1');
+  await participant.getByRole('button', { name: 'Editar Warley' }).click();
+  const name = participant.getByRole('textbox', { name: 'Novo nome do participante' });
+  await name.fill('Carla Souza');
+  await participant.getByRole('button', { name: 'Salvar nome' }).click();
+  await expect(participant.getByRole('alert')).toBeVisible();
+
+  await name.fill('Warley da viagem');
+  await participant.getByRole('button', { name: 'Salvar nome' }).click();
+  await expect(participant.getByTestId('participant-name-p_warley_1')).toHaveText('Warley da viagem');
+  await expect(participant.getByTestId('participant-linked-badge-p_warley_1')).toContainText('warley@splitpay.dev');
+  const transfer = page.getByTestId(`transfer-item-p_warley_1-${ownerParticipantId}`);
+  await expect(transfer).toContainText('Warley da viagem');
+  await expect(transfer).toContainText('R$ 33,33');
+  await page.getByTestId('back-to-home-btn').click();
+  await page.reload();
+  await page.getByTestId(openCapitolio).click();
+  await expect(participant.getByTestId('participant-name-p_warley_1')).toHaveText('Warley da viagem');
+});
