@@ -95,3 +95,27 @@ test('dono arquiva e participante comum encontra o projeto sem controles do dono
   await expect(page.getByTestId('participant-readonly-badge')).toBeVisible();
   await expect(page.getByTestId('toggle-archive-project-btn')).toHaveCount(0);
 });
+
+test('recarregar mantém um projeto sem despesas em dia', async ({ page }) => {
+  const status = page.getByTestId('project-status-badge-grp_republica');
+  await expect(status).toHaveText('Grupo: Quite');
+
+  await page.reload();
+
+  await expect(status).toHaveText('Grupo: Quite');
+});
+
+test('preserva dados armazenados quando o projeto local não pode ser lido', async ({ page }) => {
+  await expect(page.getByTestId('projects-home-view')).toBeVisible();
+  const damagedSnapshot = '{"users":';
+  await page.evaluate((value) => {
+    localStorage.setItem('splitpay_ledger_workspace_v1', value);
+  }, damagedSnapshot);
+
+  await page.reload();
+
+  await expect(page.getByRole('alert')).toContainText('dados locais');
+  await expect(page.getByTestId('projects-home-view')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('splitpay_ledger_workspace_v1')))
+    .toBe(damagedSnapshot);
+});
