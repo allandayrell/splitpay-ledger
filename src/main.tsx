@@ -26,7 +26,7 @@ import { removeParticipant, updateParticipant } from './domain/group/group';
 import { removeExpense, saveExpense } from './domain/ledger/balanceCalculator';
 import { formatBRL, toCents } from './domain/money/money';
 import {
-  createSettlementRecord,
+  createSettlementForTransfer,
   revertSettlementRecord,
   simplifyDebts,
   type ParticipantBalanceEntry,
@@ -673,15 +673,15 @@ function SplitPayApplication() {
     }
   }
 
-  function handleSettleTransfer(transfer: TransferInstruction) {
-    if (!activeProject) return;
+  function handleSettleTransfer(transfer: TransferInstruction, amountCents?: number): string | null {
+    if (!activeProject) return 'O projeto não está disponível.';
     try {
-      const record = createSettlementRecord(activeProject.group, {
-        groupId: activeProject.group.id,
-        fromParticipantId: transfer.fromParticipantId,
-        toParticipantId: transfer.toParticipantId,
-        amountCents: transfer.amountCents,
-      });
+      const pending = transfers.find((entry) =>
+        entry.fromParticipantId === transfer.fromParticipantId &&
+        entry.toParticipantId === transfer.toParticipantId,
+      );
+      if (!pending) throw new Error('A transferência deixou de estar pendente.');
+      const record = createSettlementForTransfer(group, pending, amountCents);
       setProjects((prev) =>
         prev.map((p) =>
           p.group.id === activeProject.group.id
@@ -694,8 +694,12 @@ function SplitPayApplication() {
         ),
       );
       setExpenseDraftChanged(false);
+      setFeedbackError(null);
+      return null;
     } catch (err) {
-      setFeedbackError(err instanceof Error ? err.message : 'Erro ao registrar quitação.');
+      const message = err instanceof Error ? err.message : 'Erro ao registrar quitação.';
+      setFeedbackError(message);
+      return message;
     }
   }
 

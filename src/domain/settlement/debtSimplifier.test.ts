@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import {
   applySettlementsToBalances,
+  createSettlementForTransfer,
   createSettlementRecord,
   revertSettlementRecord,
   simplifyDebts,
@@ -23,6 +24,35 @@ const sampleGroup: Group = {
 };
 
 describe('Debt Simplifier & Settlement Engine', () => {
+  it('applies a partial payment to the suggested transfer and restores it after reversal', () => {
+    const balances = [
+      { participantId: 'p_alice', netBalanceCents: 4000 },
+      { participantId: 'p_bruno', netBalanceCents: -4000 },
+    ];
+    const transfer = simplifyDebts(balances)[0]!;
+    const payment = createSettlementForTransfer(sampleGroup, transfer, 1500);
+    const remaining = simplifyDebts(applySettlementsToBalances(balances, [payment]));
+
+    expect(remaining).toEqual([{ ...transfer, amountCents: 2500 }]);
+    expect(revertSettlementRecord([payment], payment.id)).toEqual([]);
+  });
+
+  it('defaults to the full outstanding amount', () => {
+    const transfer = { fromParticipantId: 'p_bruno', toParticipantId: 'p_alice', amountCents: 100 };
+    expect(createSettlementForTransfer(sampleGroup, transfer)).toMatchObject({
+      ...transfer, groupId: sampleGroup.id,
+    });
+  });
+
+  it.each([[0, 'INVALID_SETTLEMENT_AMOUNT'], [101, 'SETTLEMENT_EXCEEDS_TRANSFER']])(
+    'rejects a payment of %i cents when only 100 cents are outstanding',
+    (amount, code) => {
+      const transfer = { fromParticipantId: 'p_bruno', toParticipantId: 'p_alice', amountCents: 100 };
+      expect(() => createSettlementForTransfer(sampleGroup, transfer, amount))
+        .toThrow(expect.objectContaining({ code }));
+    },
+  );
+
   it('returns no transfers when all participants are already settled (zero balances)', () => {
     const transfers = simplifyDebts([
       { participantId: 'p_alice', netBalanceCents: 0 },

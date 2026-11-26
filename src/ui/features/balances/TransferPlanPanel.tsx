@@ -1,5 +1,6 @@
+import { useState, type FormEvent } from 'react';
 import { ArrowRight, CheckCircle2, HandCoins, History, RotateCcw } from 'lucide-react';
-import { formatBRL } from '../../../domain/money/money';
+import { formatBRL, toCents } from '../../../domain/money/money';
 import type {
   Participant,
   SettlementRecord,
@@ -11,7 +12,7 @@ export interface TransferPlanPanelProps {
   transfers: readonly TransferInstruction[];
   settlements: readonly SettlementRecord[];
   balanceError?: string | null;
-  onSettleTransfer: (transfer: TransferInstruction) => void;
+  onSettleTransfer: (transfer: TransferInstruction, amountCents?: number) => string | null;
   onRevertSettlement?: (settlementId: string) => void;
 }
 
@@ -23,10 +24,22 @@ export function TransferPlanPanel({
   onSettleTransfer,
   onRevertSettlement,
 }: TransferPlanPanelProps) {
+  const [partial, setPartial] = useState<{ key: string; amount: string; error: string | null } | null>(null);
   const nameById = new Map(participants.map((p) => [p.id, p.name]));
 
   function getName(id: string): string {
     return nameById.get(id) ?? id;
+  }
+
+  function handlePartialSubmit(event: FormEvent, transfer: TransferInstruction) {
+    event.preventDefault();
+    if (!partial) return;
+    try {
+      const error = onSettleTransfer(transfer, toCents(partial.amount));
+      setPartial(error ? { ...partial, error } : null);
+    } catch {
+      setPartial({ ...partial, error: 'Informe um valor válido para o pagamento.' });
+    }
   }
 
   return (
@@ -85,31 +98,67 @@ export function TransferPlanPanel({
               <li
                 key={key}
                 data-testid={`transfer-item-${transfer.fromParticipantId}-${transfer.toParticipantId}`}
-                className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:flex-row sm:items-center"
+                className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4"
               >
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-bold text-rose-700">{fromName}</span>
-                  <span className="text-slate-500">transfere</span>
-                  <span
-                    data-testid={`transfer-amount-${transfer.fromParticipantId}-${transfer.toParticipantId}`}
-                    className="rounded-lg bg-white px-2.5 py-1 font-extrabold text-slate-900 shadow-2xs"
-                  >
-                    {formatBRL(transfer.amountCents)}
-                  </span>
-                  <ArrowRight className="h-4 w-4 text-slate-400" />
-                  <span className="text-slate-500">para</span>
-                  <span className="font-bold text-emerald-700">{toName}</span>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-bold text-rose-700">{fromName}</span>
+                    <span className="text-slate-500">transfere</span>
+                    <span
+                      data-testid={`transfer-amount-${transfer.fromParticipantId}-${transfer.toParticipantId}`}
+                      className="rounded-lg bg-white px-2.5 py-1 font-extrabold text-slate-900 shadow-2xs"
+                    >
+                      {formatBRL(transfer.amountCents)}
+                    </span>
+                    <ArrowRight className="h-4 w-4 text-slate-400" />
+                    <span className="text-slate-500">para</span>
+                    <span className="font-bold text-emerald-700">{toName}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      data-testid={`settle-transfer-btn-${transfer.fromParticipantId}-${transfer.toParticipantId}`}
+                      type="button"
+                      onClick={() => {
+                        onSettleTransfer(transfer);
+                        setPartial(null);
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700"
+                    >
+                      <HandCoins className="h-4 w-4" />
+                      Quitar Transferência
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPartial({ key, amount: '', error: null })}
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
+                    >
+                      Registrar parte
+                    </button>
+                  </div>
                 </div>
-
-                <button
-                  data-testid={`settle-transfer-btn-${transfer.fromParticipantId}-${transfer.toParticipantId}`}
-                  type="button"
-                  onClick={() => onSettleTransfer(transfer)}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700"
-                >
-                  <HandCoins className="h-4 w-4" />
-                  Quitar Transferência
-                </button>
+                {partial?.key === key && (
+                  <form noValidate onSubmit={(event) => handlePartialSubmit(event, transfer)} className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="number"
+                        aria-label="Valor do pagamento parcial"
+                        min="0.01"
+                        step="0.01"
+                        max={transfer.amountCents / 100}
+                        value={partial.amount}
+                        onChange={(event) => setPartial({ ...partial, amount: event.target.value, error: null })}
+                        className="w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                      />
+                      <button type="submit" className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white">
+                        Registrar pagamento
+                      </button>
+                      <button type="button" onClick={() => setPartial(null)} className="text-xs font-semibold text-slate-600">
+                        Cancelar
+                      </button>
+                    </div>
+                    {partial.error && <p role="alert" className="text-xs text-rose-700">{partial.error}</p>}
+                  </form>
+                )}
               </li>
             );
           })}
