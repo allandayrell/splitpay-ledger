@@ -22,7 +22,7 @@ import {
   registerUserAccount,
   updateUserProfile,
 } from './domain/auth/userAccount';
-import { removeParticipant } from './domain/group/group';
+import { removeParticipant, updateParticipant } from './domain/group/group';
 import { removeExpense, saveExpense } from './domain/ledger/balanceCalculator';
 import { formatBRL, toCents } from './domain/money/money';
 import {
@@ -479,6 +479,18 @@ function SplitPayApplication() {
     }
   }
 
+  function handleRenameParticipant(participantId: string, name: string): string | null {
+    try {
+      const updatedGroup = updateParticipant(group, { participantId, name });
+      setProjects((prev) =>
+        prev.map((project) => project.group.id === group.id ? { ...project, group: updatedGroup } : project),
+      );
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Não foi possível editar o participante.';
+    }
+  }
+
   function handleRemoveParticipant(participantId: string) {
     if (!activeProject) return;
     try {
@@ -792,6 +804,7 @@ function SplitPayApplication() {
               registeredUsers={users}
               canManageParticipants={true}
               onAddParticipant={handleAddParticipantToActive}
+              onRenameParticipant={handleRenameParticipant}
               onRemoveParticipant={handleRemoveParticipant}
             />
 

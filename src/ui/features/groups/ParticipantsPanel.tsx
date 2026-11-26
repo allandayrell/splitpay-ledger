@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { AtSign, Trash2, UserCheck, UserPlus } from 'lucide-react';
+import { AtSign, Pencil, Trash2, UserCheck, UserPlus } from 'lucide-react';
 import type { Participant, UserAccount } from '../../../domain/types';
 
 export interface ParticipantsPanelProps {
@@ -10,6 +10,7 @@ export interface ParticipantsPanelProps {
     name: string,
     referencedUserEmailOrId?: string,
   ) => boolean;
+  onRenameParticipant: (participantId: string, name: string) => string | null;
   onRemoveParticipant: (participantId: string) => void;
 }
 
@@ -18,10 +19,12 @@ export function ParticipantsPanel({
   registeredUsers = [],
   canManageParticipants = true,
   onAddParticipant,
+  onRenameParticipant,
   onRemoveParticipant,
 }: ParticipantsPanelProps) {
   const [name, setName] = useState('');
   const [selectedUserEmail, setSelectedUserEmail] = useState('');
+  const [editing, setEditing] = useState<{ id: string; name: string; error: string | null } | null>(null);
 
   function handleSelectAccount(email: string) {
     setSelectedUserEmail(email);
@@ -43,6 +46,13 @@ export function ParticipantsPanel({
       setName('');
       setSelectedUserEmail('');
     }
+  }
+
+  function handleRename(event: FormEvent) {
+    event.preventDefault();
+    if (!editing) return;
+    const error = onRenameParticipant(editing.id, editing.name);
+    setEditing(error ? { ...editing, error } : null);
   }
 
   return (
@@ -123,7 +133,7 @@ export function ParticipantsPanel({
             <li
               key={participant.id}
               data-testid={`participant-item-${participant.id}`}
-              className="flex items-center justify-between py-3"
+              className="flex flex-wrap items-center justify-between gap-2 py-3"
             >
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-50 text-sm font-bold text-indigo-700">
@@ -154,17 +164,45 @@ export function ParticipantsPanel({
                 </div>
               </div>
 
-              {canManageParticipants ? (
-                <button
-                  data-testid={`remove-participant-${participant.id}`}
-                  type="button"
-                  onClick={() => onRemoveParticipant(participant.id)}
-                  aria-label={`Remover ${participant.name}`}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              ) : null}
+              {canManageParticipants && (editing?.id === participant.id ? (
+                <form onSubmit={handleRename} className="w-full space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      aria-label="Novo nome do participante"
+                      value={editing.name}
+                      onChange={(event) => setEditing({ ...editing, name: event.target.value, error: null })}
+                      className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                    />
+                    <button type="submit" className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white">
+                      Salvar nome
+                    </button>
+                    <button type="button" onClick={() => setEditing(null)} className="px-1 text-xs font-semibold text-slate-600">
+                      Cancelar
+                    </button>
+                  </div>
+                  {editing.error && <p role="alert" className="text-xs text-rose-700">{editing.error}</p>}
+                </form>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ id: participant.id, name: participant.name, error: null })}
+                    aria-label={`Editar ${participant.name}`}
+                    className="rounded-lg p-1.5 text-slate-500 hover:bg-indigo-50 hover:text-indigo-700"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    data-testid={`remove-participant-${participant.id}`}
+                    type="button"
+                    onClick={() => onRemoveParticipant(participant.id)}
+                    aria-label={`Remover ${participant.name}`}
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
             </li>
           ))}
         </ul>
