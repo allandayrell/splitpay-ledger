@@ -23,6 +23,7 @@ import {
   updateUserProfile,
 } from './domain/auth/userAccount';
 import { removeParticipant } from './domain/group/group';
+import { removeExpense, saveExpense } from './domain/ledger/balanceCalculator';
 import { formatBRL, toCents } from './domain/money/money';
 import {
   createSettlementRecord,
@@ -38,13 +39,13 @@ import {
   filterProjectsForUser,
   isProjectOwner,
   renameProjectAsOwner,
-  resolveProjectStatus,
   setProjectArchivedAsOwner,
 } from './domain/workspace/projectWorkspace';
 import type {
   CurrencyCode,
   EmailNotification,
   Expense,
+  ExpenseCategory,
   GroupLedgerState,
   TransferInstruction,
   UserAccount,
@@ -56,6 +57,7 @@ import {
   type AdvancedSplitMode,
 } from './ui/features/expenses/ExactAndSharesSplitInputs';
 import { buildSplitInputs, restoreSplitForm, splitModeLabels } from './ui/features/expenses/expenseSplitForm';
+import { ExpenseRecordsPanel, expenseCategoryLabels } from './ui/features/expenses/ExpenseRecordsPanel';
 import { GroupHeader } from './ui/features/groups/GroupHeader';
 import { ParticipantsPanel } from './ui/features/groups/ParticipantsPanel';
 import { ProjectsHomeView } from './ui/features/workspace/ProjectsHomeView';
@@ -191,6 +193,9 @@ function SplitPayApplication() {
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
 
+  const [expenseDraftId, setExpenseDraftId] = useState('');
+  const [expenseDescription, setExpenseDescription] = useState('');
+  const [expenseCategory, setExpenseCategory] = useState<ExpenseCategory>('OTHER');
   const [rawAmount, setRawAmount] = useState(defaultDraftAmount);
   const [selectedPayerIds, setSelectedPayerIds] = useState<string[]>([]);
   const [payerToAddId, setPayerToAddId] = useState<string>('');
@@ -274,8 +279,14 @@ function SplitPayApplication() {
     setNotifications((prev) => markNotificationAsRead(prev, notificationId));
   }
 
-  function loadExpenseDraft(project: GroupLedgerState) {
-    const expense = project.expenses[0];
+  function loadExpenseDraft(
+    project: GroupLedgerState,
+    expense: Expense | null = project.expenses[0] ?? null,
+    startBlank = false,
+  ) {
+    setExpenseDraftId(expense?.id ?? (startBlank ? crypto.randomUUID() : `exp_bill_${project.group.id}`));
+    setExpenseDescription(expense?.description ?? (startBlank ? '' : 'Conta Principal do Grupo'));
+    setExpenseCategory(expense?.category ?? 'OTHER');
     if (expense) {
       setRawAmount((expense.amountCents / 100).toFixed(2));
       setSelectedPayerIds(expense.payers.map(({ participantId }) => participantId));
@@ -288,9 +299,10 @@ function SplitPayApplication() {
       setExcludedParticipantIds(splitForm.excludedIds);
     } else {
       const firstParticipantId = project.group.participants[0]?.id;
-      setRawAmount(defaultDraftAmount);
+      const amount = startBlank ? '' : defaultDraftAmount;
+      setRawAmount(amount);
       setSelectedPayerIds(firstParticipantId ? [firstParticipantId] : []);
-      setPayerAmounts(firstParticipantId ? { [firstParticipantId]: defaultDraftAmount } : {});
+      setPayerAmounts(firstParticipantId ? { [firstParticipantId]: amount } : {});
       setSplitMode('SHARES');
       setValuesByParticipant({});
       setExcludedParticipantIds([]);
@@ -411,7 +423,7 @@ function SplitPayApplication() {
             onSelectProject={(groupId) => {
               const target = visibleProjects.find((p) => p.group.id === groupId);
               if (!target) return;
-              loadExpenseDraft(target);
+              loadExpenseDraft(target, target.expenses[0] ?? null, target.expenses.length === 0);
               setActiveGroupId(groupId);
               setFeedbackError(null);
               setFeedbackBanner(null);
@@ -446,7 +458,7 @@ function SplitPayApplication() {
         ),
       );
       const added = result.group.participants.at(-1);
-      if (activeProject.expenses[0] && added) {
+      if (activeProject.expenses.some(({ id }) => id === expenseDraftId) && added) {
         setExcludedParticipantIds((prev) => [...prev, added.id]);
       }
 
@@ -535,15 +547,20 @@ function SplitPayApplication() {
 
   const paidCentsByParticipant = new Map<string, number>();
   let totalPaidCents = 0;
+  let payerInputInvalid = false;
   for (const participant of group.participants) {
     if (selectedPayerIds.includes(participant.id)) {
       try {
         const rawPaid = payerAmounts[participant.id] ?? '0';
-        const cents = rawPaid.trim() === '' ? 0 : Math.max(0, toCents(rawPaid));
-        paidCentsByParticipant.set(participant.id, cents);
-        totalPaidCents += cents;
+        const cents = rawPaid.trim() === '' ? 0 : toCents(rawPaid);
+        if (cents < 0) {
+          payerInputInvalid = true;
+        } else {
+          paidCentsByParticipant.set(participant.id, cents);
+          totalPaidCents += cents;
+        }
       } catch {
-        paidCentsByParticipant.set(participant.id, 0);
+        payerInputInvalid = true;
       }
     } else {
       paidCentsByParticipant.set(participant.id, 0);
@@ -551,70 +568,96 @@ function SplitPayApplication() {
   }
 
   const payersSumMatchesTotal =
+    !payerInputInvalid &&
     totalExpenseCents > 0 &&
     selectedPayerIds.length > 0 &&
     totalPaidCents === totalExpenseCents;
 
-  const storedExpense = activeProject.expenses[0];
+  const storedExpense = activeProject.expenses.find(({ id }) => id === expenseDraftId);
   let activeExpenseSnapshot: Expense | null = !expenseDraftChanged && storedExpense ? storedExpense : null;
+  let previewProject = activeProject;
+  let draftError = '';
 
   try {
     if (!activeExpenseSnapshot && payersSumMatchesTotal && group.participants.length > 0) {
       const splitInputs = buildSplitInputs(splitMode, group.participants, valuesByParticipant, excludedParticipantIds);
       const splits = calculateExpenseSplit(totalExpenseCents, group.participants, splitMode, splitInputs);
-      const validPayers = selectedPayerIds
+      const payers = selectedPayerIds
         .map((id) => ({
           participantId: id,
           amountCents: paidCentsByParticipant.get(id) ?? 0,
         }))
         .filter((payer) => payer.amountCents > 0);
-
-      activeExpenseSnapshot = {
+      const proposedExpense = {
         ...storedExpense,
-        id: storedExpense?.id ?? `exp_bill_${group.id}`,
+        id: expenseDraftId,
         groupId: group.id,
-        description: storedExpense?.description ?? 'Conta Principal do Grupo',
-        category: storedExpense?.category ?? 'OTHER',
+        description: expenseDescription,
+        category: expenseCategory,
         amountCents: totalExpenseCents,
         currency: storedExpense?.currency ?? group.baseCurrency,
-        payers: validPayers,
+        payers,
         splitType: splitMode,
         splitInputs,
         splits,
-        createdAt: storedExpense?.createdAt ?? group.createdAt,
+        createdAt: storedExpense?.createdAt ?? new Date().toISOString(),
       };
+      previewProject = saveExpense(activeProject, proposedExpense);
+      activeExpenseSnapshot = proposedExpense;
     }
-  } catch {
-    // A prévia do rateio mostra a validação enquanto o rascunho está incompleto.
+  } catch (error) {
+    draftError = error instanceof Error ? error.message : 'Revise os dados da despesa.';
   }
 
-  const currentExpenses = activeExpenseSnapshot
-    ? [activeExpenseSnapshot, ...activeProject.expenses.slice(1)]
-    : activeProject.expenses;
-
-  function persistActiveExpenseSnapshot(targetGroupId: string, expenseToSave: Expense | null) {
-    if (!expenseToSave) return;
-    setProjects((prev) =>
-      prev.map((proj) =>
-        proj.group.id === targetGroupId ? { ...proj, expenses: [expenseToSave, ...proj.expenses.slice(1)] } : proj,
-      ),
-    );
-  }
-
+  const currentExpenses = previewProject.expenses;
   let effectiveBalances: ParticipantBalanceEntry[] = [];
   let transfers: TransferInstruction[] = [];
   let balanceError: string | null = null;
-  if (resolveProjectStatus(activeProject) === 'INCONSISTENTE') {
-    balanceError = 'Os registros do projeto têm saldos inconsistentes. Revise a conta e os acertos.';
-  } else if (!activeExpenseSnapshot) {
-    balanceError = 'Complete o valor, os pagadores e a divisão para calcular os saldos.';
+  if (expenseDraftChanged && !activeExpenseSnapshot) {
+    balanceError = draftError || 'Complete o valor, os pagadores e a divisão para calcular os saldos.';
   } else {
     try {
-      const balances = calculateProjectEffectiveBalances({ ...activeProject, expenses: currentExpenses });
+      const balances = calculateProjectEffectiveBalances(previewProject);
       transfers = simplifyDebts(balances);
       effectiveBalances = balances;
     } catch {
-      balanceError = 'Não foi possível calcular os saldos. Revise a conta e os acertos.';
+      balanceError = 'Os registros do projeto têm saldos inconsistentes. Revise as despesas e os acertos.';
+    }
+  }
+
+  function persistExpenseDraft(): boolean {
+    if (!activeExpenseSnapshot || balanceError) {
+      setFeedbackError(balanceError || 'Complete os dados da despesa antes de gravar.');
+      return false;
+    }
+    setProjects((prev) => prev.map((project) =>
+      project.group.id === group.id ? { ...project, expenses: currentExpenses } : project,
+    ));
+    setExpenseDraftChanged(false);
+    setFeedbackError(null);
+    return true;
+  }
+
+  function handleSelectExpense(expense: Expense | null) {
+    if (expenseDraftChanged && !persistExpenseDraft()) return;
+    loadExpenseDraft(activeProject!, expense, expense === null);
+    setFeedbackError(null);
+  }
+
+  function handleRemoveExpense(expense: Expense) {
+    const inCurrentDraft = expense.id === expenseDraftId;
+    try {
+      if (!inCurrentDraft && expenseDraftChanged && !persistExpenseDraft()) return;
+      const next = removeExpense(inCurrentDraft ? activeProject! : previewProject, expense.id);
+      setProjects((prev) => prev.map((project) =>
+        project.group.id === group.id ? { ...project, expenses: next.expenses } : project,
+      ));
+      if (inCurrentDraft) {
+        loadExpenseDraft(next, next.expenses[0] ?? null, next.expenses.length === 0);
+      }
+      setFeedbackError(null);
+    } catch (error) {
+      setFeedbackError(error instanceof Error ? error.message : 'Não foi possível excluir a despesa.');
     }
   }
 
@@ -638,6 +681,7 @@ function SplitPayApplication() {
             : p,
         ),
       );
+      setExpenseDraftChanged(false);
     } catch (err) {
       setFeedbackError(err instanceof Error ? err.message : 'Erro ao registrar quitação.');
     }
@@ -658,6 +702,7 @@ function SplitPayApplication() {
             : p,
         ),
       );
+      if (!balanceError) setExpenseDraftChanged(false);
       setFeedbackError(null);
     } catch (err) {
       setFeedbackError(err instanceof Error ? err.message : 'Erro ao desfazer liquidação.');
@@ -673,7 +718,7 @@ function SplitPayApplication() {
             data-testid="back-to-home-btn"
             type="button"
             onClick={() => {
-              if (expenseDraftChanged && !balanceError) persistActiveExpenseSnapshot(group.id, activeExpenseSnapshot);
+              if (expenseDraftChanged && !balanceError) persistExpenseDraft();
               setActiveGroupId(null);
               setFeedbackError(null);
               setFeedbackBanner(null);
@@ -783,6 +828,12 @@ function SplitPayApplication() {
           </div>
 
           <div className="space-y-6 lg:col-span-7">
+            <ExpenseRecordsPanel
+              expenses={activeProject.expenses}
+              onCreate={() => handleSelectExpense(null)}
+              onEdit={handleSelectExpense}
+              onRemove={handleRemoveExpense}
+            />
             <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
               <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                 <div className="flex items-center gap-2">
@@ -814,6 +865,36 @@ function SplitPayApplication() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1 text-sm font-semibold text-slate-700">
+                  <span>Descrição da despesa</span>
+                  <input
+                    type="text"
+                    value={expenseDescription}
+                    onChange={(event) => {
+                      setExpenseDraftChanged(true);
+                      setExpenseDescription(event.target.value);
+                    }}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="space-y-1 text-sm font-semibold text-slate-700">
+                  <span>Categoria</span>
+                  <select
+                    value={expenseCategory}
+                    onChange={(event) => {
+                      setExpenseDraftChanged(true);
+                      setExpenseCategory(event.target.value as ExpenseCategory);
+                    }}
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  >
+                    {Object.entries(expenseCategoryLabels).map(([category, label]) => (
+                      <option key={category} value={category}>{label}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
               <div>
@@ -989,6 +1070,28 @@ function SplitPayApplication() {
                     : [...prev, participantId]);
                 }}
               />
+              <div className="flex flex-wrap justify-end gap-2">
+                {expenseDraftChanged && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadExpenseDraft(activeProject, storedExpense ?? null, !storedExpense);
+                      setFeedbackError(null);
+                    }}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700"
+                  >
+                    Cancelar edição
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={persistExpenseDraft}
+                  disabled={!activeExpenseSnapshot || !!balanceError || (!expenseDraftChanged && !!storedExpense)}
+                  className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  Salvar despesa
+                </button>
+              </div>
             </section>
 
             <TransferPlanPanel

@@ -162,3 +162,59 @@ test('mantém os pesos da conta gravada ao reabrir e adicionar participante', as
   await expect(transfers.getByRole('listitem')).toHaveCount(2);
   await expect(transfers.getByRole('listitem').filter({ hasText: 'Warley' })).toContainText('R$ 25,00');
 });
+
+test('registra duas despesas e agrega o total e os saldos do projeto', async ({ page }) => {
+  await page.getByTestId('open-create-project-btn').click();
+  await page.getByTestId('new-project-name-input').fill('Viagem com despesas');
+  await page.getByTestId('submit-create-project-btn').click();
+
+  for (const participant of ['Diana', 'Eduardo', 'Paula']) {
+    await page.getByTestId('participant-name-input').fill(participant);
+    await page.getByTestId('add-participant-btn').click();
+  }
+  await page.getByLabel('Descrição da despesa').fill('Hospedagem');
+  await page.getByLabel('Categoria').selectOption('ACCOMMODATION');
+  await page.getByTestId('expense-total-input').fill('120');
+  await page.getByRole('button', { name: 'Salvar despesa' }).click();
+
+  await page.getByRole('button', { name: 'Nova despesa' }).click();
+  await page.getByLabel('Descrição da despesa').fill('Jantar');
+  await page.getByLabel('Categoria').selectOption('FOOD');
+  await page.getByTestId('expense-total-input').fill('60');
+  await page.getByRole('button', { name: 'Salvar despesa' }).click();
+
+  const records = page.getByTestId('expense-list');
+  await expect(records.getByRole('listitem')).toHaveCount(2);
+  await expect(records.getByRole('listitem').filter({ hasText: 'Jantar' })).toContainText('Alimentação');
+  await expect(page.getByTestId('expense-total-spent')).toHaveText('R$ 180,00');
+  const transfers = page.getByTestId('transfer-instructions-list');
+  await expect(transfers.getByRole('listitem')).toHaveCount(3);
+  await expect(transfers.getByRole('listitem').filter({ hasText: 'Diana' })).toContainText('R$ 45,00');
+});
+
+test('edita e exclui despesas pelo histórico e mantém o projeto vazio após recarregar', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  await page.getByRole('button', { name: 'Nova despesa' }).click();
+  await page.getByLabel('Descrição da despesa').fill('Jantar');
+  await page.getByTestId('expense-total-input').fill('60');
+  await page.getByRole('button', { name: 'Salvar despesa' }).click();
+
+  await page.getByRole('button', { name: 'Editar despesa Conta do Projeto' }).click();
+  await page.getByTestId('expense-total-input').fill('120');
+  await page.getByRole('button', { name: 'Salvar despesa' }).click();
+  await expect(page.getByTestId('expense-total-spent')).toHaveText('R$ 180,00');
+
+  await page.getByRole('button', { name: 'Excluir despesa Jantar' }).click();
+  await expect(page.getByTestId('expense-total-spent')).toHaveText('R$ 120,00');
+  const transfers = page.getByTestId('transfer-instructions-list');
+  await expect(transfers.getByRole('listitem').filter({ hasText: 'Warley' })).toContainText('R$ 40,00');
+
+  await page.getByRole('button', { name: 'Excluir despesa Conta do Projeto' }).click();
+  await expect(page.getByTestId('all-settled-banner')).toBeVisible();
+  await page.getByTestId('back-to-home-btn').click();
+  await page.reload();
+  await page.getByTestId(openCapitolio).click();
+
+  await expect(page.getByTestId('expense-total-spent')).toHaveText('R$ 0,00');
+  await expect(page.getByTestId('all-settled-banner')).toBeVisible();
+});
