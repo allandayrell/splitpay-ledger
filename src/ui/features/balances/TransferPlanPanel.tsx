@@ -10,6 +10,7 @@ export interface TransferPlanPanelProps {
   participants: readonly Participant[];
   transfers: readonly TransferInstruction[];
   settlements: readonly SettlementRecord[];
+  balanceError?: string | null;
   onSettleTransfer: (transfer: TransferInstruction) => void;
   onRevertSettlement?: (settlementId: string) => void;
 }
@@ -18,6 +19,7 @@ export function TransferPlanPanel({
   participants,
   transfers,
   settlements,
+  balanceError,
   onSettleTransfer,
   onRevertSettlement,
 }: TransferPlanPanelProps) {
@@ -38,19 +40,28 @@ export function TransferPlanPanel({
             Plano Otimizado de Acertos (Simplificação de Dívidas)
           </h2>
           <p className="text-sm text-slate-500">
-            Menor número de transferências calculado automaticamente para quitar o grupo.
+            Transferências sugeridas para quitar os saldos do grupo.
           </p>
         </div>
-        <span
-          data-testid="pending-transfers-count"
-          className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700"
-        >
-          {transfers.length}{' '}
-          {transfers.length === 1 ? 'transferência pendente' : 'transferências pendentes'}
-        </span>
+        {!balanceError && (
+          <span
+            data-testid="pending-transfers-count"
+            className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700"
+          >
+            {transfers.length}{' '}
+            {transfers.length === 1 ? 'transferência pendente' : 'transferências pendentes'}
+          </span>
+        )}
       </div>
 
-      {transfers.length === 0 ? (
+      {balanceError ? (
+        <p
+          role="alert"
+          className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+        >
+          {balanceError}
+        </p>
+      ) : transfers.length === 0 ? (
         <div
           data-testid="all-settled-banner"
           className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800"

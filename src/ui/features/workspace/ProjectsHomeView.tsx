@@ -119,8 +119,9 @@ export function ProjectsHomeView({
     const { group } = project;
     const isOwner = isProjectOwner(group, currentUser.id);
     const status = resolveProjectStatus(project);
-    const userNetCents = getUserNetBalanceInProject(project, currentUser);
-    const userPendingTransfers = getUserPendingTransfersInProject(project, currentUser);
+    const userNetCents = status === 'PENDENTE' ? getUserNetBalanceInProject(project, currentUser) : 0;
+    const userPendingTransfers =
+      status === 'PENDENTE' ? getUserPendingTransfersInProject(project, currentUser) : [];
     const isEditingThis = editingGroupId === group.id;
 
     return (
@@ -165,7 +166,9 @@ export function ProjectsHomeView({
                       : 'bg-amber-50 text-amber-700'
                   }`}
                 >
-                  {status === 'QUITE' ? 'Grupo: Quite' : 'Grupo: Acertos Pendentes'}
+                  {status === 'QUITE' && 'Grupo: Quite'}
+                  {status === 'PENDENTE' && 'Grupo: Acertos Pendentes'}
+                  {status === 'INCONSISTENTE' && 'Grupo: Saldos Inconsistentes'}
                 </span>
 
                 {userPendingTransfers.length > 0 ? (

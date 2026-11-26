@@ -40,6 +40,7 @@ import {
   filterProjectsForUser,
   isProjectOwner,
   renameProjectAsOwner,
+  resolveProjectStatus,
   setProjectArchivedAsOwner,
 } from './domain/workspace/projectWorkspace';
 import type {
@@ -688,13 +689,21 @@ function SplitPayApplication() {
     );
   }
 
-  let effectiveBalances = baseBalances;
+  let effectiveBalances: ParticipantBalanceEntry[] = [];
   let transfers: TransferInstruction[] = [];
-  try {
-    effectiveBalances = applySettlementsToBalances(baseBalances, settlements);
-    transfers = simplifyDebts(effectiveBalances);
-  } catch {
-    transfers = [];
+  let balanceError: string | null = null;
+  if (resolveProjectStatus(activeProject) === 'INCONSISTENTE') {
+    balanceError = 'Os registros do projeto têm saldos inconsistentes. Revise a conta e os acertos.';
+  } else if (!activeExpenseSnapshot) {
+    balanceError = 'Complete o valor, os pagadores e a divisão para calcular os saldos.';
+  } else {
+    try {
+      const balances = applySettlementsToBalances(baseBalances, settlements);
+      transfers = simplifyDebts(balances);
+      effectiveBalances = balances;
+    } catch {
+      balanceError = 'Não foi possível calcular os saldos. Revise a conta e os acertos.';
+    }
   }
 
   function handleSettleTransfer(transfer: TransferInstruction) {
@@ -731,7 +740,7 @@ function SplitPayApplication() {
           p.group.id === activeProject.group.id
             ? {
                 ...p,
-                expenses: activeExpenseSnapshot ? [activeExpenseSnapshot] : p.expenses,
+                expenses: !balanceError && activeExpenseSnapshot ? [activeExpenseSnapshot] : p.expenses,
                 settlements: remaining,
               }
             : p,
@@ -751,7 +760,7 @@ function SplitPayApplication() {
             data-testid="back-to-home-btn"
             type="button"
             onClick={() => {
-              persistActiveExpenseSnapshot(group.id, activeExpenseSnapshot);
+              if (!balanceError) persistActiveExpenseSnapshot(group.id, activeExpenseSnapshot);
               setActiveGroupId(null);
               setFeedbackError(null);
               setFeedbackBanner(null);
@@ -1071,6 +1080,7 @@ function SplitPayApplication() {
               participants={group.participants}
               transfers={transfers}
               settlements={settlements}
+              balanceError={balanceError}
               onSettleTransfer={handleSettleTransfer}
               onRevertSettlement={handleRevertSettlement}
             />

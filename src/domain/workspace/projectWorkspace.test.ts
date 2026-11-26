@@ -146,6 +146,57 @@ describe('Multi-Project Workspace & Owner vs Participant Permissions', () => {
     expect(aliceHomeProjects[0]?.group.name).toBe('Churrasco da Turma');
   });
 
+  it('flags an imbalanced project for review instead of showing it as settled', () => {
+    const project = createProjectForOwner({ id: 'grp_review', name: 'Viagem', owner: allan });
+    project.expenses.push({
+      id: 'exp_imbalance',
+      groupId: project.group.id,
+      description: 'Hotel',
+      category: 'ACCOMMODATION',
+      amountCents: 100,
+      currency: 'BRL',
+      payers: [{ participantId: `p_${allan.id}`, amountCents: 100 }],
+      splitType: 'EXACT',
+      splits: [{ participantId: `p_${allan.id}`, amountCents: 99 }],
+      createdAt: '2026-11-24T12:00:00.000Z',
+    });
+
+    expect(resolveProjectStatus(project)).toBe('INCONSISTENTE');
+    expect(categorizeProjectsForUserHome([project], allan).pendingActionProjects).toEqual([project]);
+  });
+
+  it('flags an imported settlement that refers to a missing participant', () => {
+    const project = createProjectForOwner({ id: 'grp_review', name: 'Viagem', owner: allan });
+    project.settlements.push({
+      id: 'set_invalid',
+      groupId: project.group.id,
+      fromParticipantId: 'p_missing',
+      toParticipantId: `p_${allan.id}`,
+      amountCents: 100,
+      createdAt: '2026-11-24T12:00:00.000Z',
+    });
+
+    expect(resolveProjectStatus(project)).toBe('INCONSISTENTE');
+  });
+
+  it('flags expense references outside the group even if the amounts cancel out', () => {
+    const project = createProjectForOwner({ id: 'grp_review', name: 'Viagem', owner: allan });
+    project.expenses.push({
+      id: 'exp_invalid',
+      groupId: project.group.id,
+      description: 'Passeio',
+      category: 'ENTERTAINMENT',
+      amountCents: 100,
+      currency: 'BRL',
+      payers: [{ participantId: 'p_missing', amountCents: 100 }],
+      splitType: 'EXACT',
+      splits: [{ participantId: 'p_missing', amountCents: 100 }],
+      createdAt: '2026-11-24T12:00:00.000Z',
+    });
+
+    expect(resolveProjectStatus(project)).toBe('INCONSISTENTE');
+  });
+
   it('allows only the project owner to archive or unarchive a project for all members', () => {
     const project = createProjectForOwner({ id: 'grp_1', name: 'Viagem', owner: allan });
     project.group = addHybridParticipantToProject(project.group, users, {
