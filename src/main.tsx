@@ -25,17 +25,15 @@ import {
 import { removeParticipant } from './domain/group/group';
 import { formatBRL, toCents } from './domain/money/money';
 import {
-  applySettlementsToBalances,
   createSettlementRecord,
   revertSettlementRecord,
   simplifyDebts,
   type ParticipantBalanceEntry,
 } from './domain/settlement/debtSimplifier';
+import { calculateWeightedSharesSplit } from './domain/split/exactAndSharesSplit';
+import { calculateExpenseSplit } from './domain/split/splitEngine';
 import {
-  calculateExactSplit,
-  calculateWeightedSharesSplit,
-} from './domain/split/exactAndSharesSplit';
-import {
+  calculateProjectEffectiveBalances,
   createProjectForOwner,
   filterProjectsForUser,
   isProjectOwner,
@@ -57,6 +55,7 @@ import {
   ExactAndSharesSplitInputs,
   type AdvancedSplitMode,
 } from './ui/features/expenses/ExactAndSharesSplitInputs';
+import { buildSplitInputs, restoreSplitForm, splitModeLabels } from './ui/features/expenses/expenseSplitForm';
 import { GroupHeader } from './ui/features/groups/GroupHeader';
 import { ParticipantsPanel } from './ui/features/groups/ParticipantsPanel';
 import { ProjectsHomeView } from './ui/features/workspace/ProjectsHomeView';
@@ -66,6 +65,7 @@ import {
 } from './services/storageRepository';
 
 const workspaceStorage = createLocalStorageRepository(() => window.localStorage);
+const defaultDraftAmount = '100.00';
 
 function buildInitialWorkspace(users: readonly UserAccount[]): {
   projects: GroupLedgerState[];
@@ -191,12 +191,14 @@ function SplitPayApplication() {
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
 
-  const [rawAmount, setRawAmount] = useState('100.00');
+  const [rawAmount, setRawAmount] = useState(defaultDraftAmount);
   const [selectedPayerIds, setSelectedPayerIds] = useState<string[]>([]);
   const [payerToAddId, setPayerToAddId] = useState<string>('');
   const [payerAmounts, setPayerAmounts] = useState<Record<string, string>>({});
   const [splitMode, setSplitMode] = useState<AdvancedSplitMode>('SHARES');
   const [valuesByParticipant, setValuesByParticipant] = useState<Record<string, string>>({});
+  const [excludedParticipantIds, setExcludedParticipantIds] = useState<string[]>([]);
+  const [expenseDraftChanged, setExpenseDraftChanged] = useState(false);
 
   useEffect(() => {
     if (preserveStorage) return;
@@ -272,6 +274,31 @@ function SplitPayApplication() {
     setNotifications((prev) => markNotificationAsRead(prev, notificationId));
   }
 
+  function loadExpenseDraft(project: GroupLedgerState) {
+    const expense = project.expenses[0];
+    if (expense) {
+      setRawAmount((expense.amountCents / 100).toFixed(2));
+      setSelectedPayerIds(expense.payers.map(({ participantId }) => participantId));
+      setPayerAmounts(Object.fromEntries(
+        expense.payers.map(({ participantId, amountCents }) => [participantId, (amountCents / 100).toFixed(2)]),
+      ));
+      const splitForm = restoreSplitForm(expense, project.group.participants);
+      setSplitMode(Object.hasOwn(splitModeLabels, expense.splitType) ? expense.splitType : 'SHARES');
+      setValuesByParticipant(splitForm.values);
+      setExcludedParticipantIds(splitForm.excludedIds);
+    } else {
+      const firstParticipantId = project.group.participants[0]?.id;
+      setRawAmount(defaultDraftAmount);
+      setSelectedPayerIds(firstParticipantId ? [firstParticipantId] : []);
+      setPayerAmounts(firstParticipantId ? { [firstParticipantId]: defaultDraftAmount } : {});
+      setSplitMode('SHARES');
+      setValuesByParticipant({});
+      setExcludedParticipantIds([]);
+    }
+    setPayerToAddId('');
+    setExpenseDraftChanged(false);
+  }
+
   function handleCreateProject(name: string, baseCurrency: CurrencyCode): boolean {
     if (!currentUser) return false;
     try {
@@ -281,14 +308,7 @@ function SplitPayApplication() {
         owner: currentUser,
       });
       setProjects((prev) => [newProj, ...prev]);
-      const ownerParticipantId = newProj.group.participants[0]?.id;
-      if (ownerParticipantId) {
-        setSelectedPayerIds([ownerParticipantId]);
-        setPayerAmounts({ [ownerParticipantId]: rawAmount });
-      } else {
-        setSelectedPayerIds([]);
-      }
-      setPayerToAddId('');
+      loadExpenseDraft(newProj);
       setActiveGroupId(newProj.group.id);
       setFeedbackError(null);
       setFeedbackBanner(null);
@@ -390,38 +410,8 @@ function SplitPayApplication() {
             onLogout={() => setCurrentUserId(null)}
             onSelectProject={(groupId) => {
               const target = visibleProjects.find((p) => p.group.id === groupId);
-              const existingExpense = target?.expenses[0];
-              if (existingExpense) {
-                const formattedAmount = (existingExpense.amountCents / 100).toFixed(2);
-                setRawAmount(formattedAmount);
-                const nextPayerIds = existingExpense.payers.map((py) => py.participantId);
-                const nextPayerAmounts: Record<string, string> = {};
-                for (const py of existingExpense.payers) {
-                  nextPayerAmounts[py.participantId] = (py.amountCents / 100).toFixed(2);
-                }
-                setSelectedPayerIds(nextPayerIds);
-                setPayerAmounts(nextPayerAmounts);
-                setSplitMode(existingExpense.splitType === 'EXACT' ? 'EXACT' : 'SHARES');
-                if (existingExpense.splitType === 'EXACT') {
-                  const exactMap: Record<string, string> = {};
-                  for (const sp of existingExpense.splits) {
-                    exactMap[sp.participantId] = (sp.amountCents / 100).toFixed(2);
-                  }
-                  setValuesByParticipant(exactMap);
-                } else {
-                  setValuesByParticipant({});
-                }
-              } else {
-                const firstParticipantId = target?.group.participants[0]?.id;
-                if (firstParticipantId) {
-                  setSelectedPayerIds([firstParticipantId]);
-                  setPayerAmounts({ [firstParticipantId]: rawAmount });
-                } else {
-                  setSelectedPayerIds([]);
-                }
-                setValuesByParticipant({});
-              }
-              setPayerToAddId('');
+              if (!target) return;
+              loadExpenseDraft(target);
               setActiveGroupId(groupId);
               setFeedbackError(null);
               setFeedbackBanner(null);
@@ -450,32 +440,15 @@ function SplitPayApplication() {
         invitedByName: currentUser.name,
       });
 
-      const nextGroup = result.group;
-      const currentExpense = activeProject.expenses[0];
-      let nextExpenses = activeProject.expenses;
-      if (currentExpense && nextGroup.participants.length > 0) {
-        try {
-          const recalculatedSplits = calculateWeightedSharesSplit(
-            currentExpense.amountCents,
-            nextGroup.participants,
-            nextGroup.participants.map((pt) => ({
-              participantId: pt.id,
-              value: pt.defaultWeight,
-            })),
-          );
-          nextExpenses = [{ ...currentExpense, splits: recalculatedSplits }];
-        } catch {
-          nextExpenses = activeProject.expenses;
-        }
-      }
-
       setProjects((prev) =>
-        prev.map((p) =>
-          p.group.id === activeProject.group.id
-            ? { ...p, group: nextGroup, expenses: nextExpenses }
-            : p,
+        prev.map((project) =>
+          project.group.id === activeProject.group.id ? { ...project, group: result.group } : project,
         ),
       );
+      const added = result.group.participants.at(-1);
+      if (activeProject.expenses[0] && added) {
+        setExcludedParticipantIds((prev) => [...prev, added.id]);
+      }
 
       if (result.notification) {
         setNotifications((prev) => [result.notification!, ...prev]);
@@ -519,6 +492,7 @@ function SplitPayApplication() {
 
   function handleAddPayerById(participantId: string) {
     if (!participantId || selectedPayerIds.includes(participantId)) return;
+    setExpenseDraftChanged(true);
     setSelectedPayerIds((prev) => {
       const next = [...prev, participantId];
       if (next.length === 1) {
@@ -538,6 +512,7 @@ function SplitPayApplication() {
   }
 
   function handleRemovePayerById(participantId: string) {
+    setExpenseDraftChanged(true);
     setSelectedPayerIds((prev) => {
       const next = prev.filter((id) => id !== participantId);
       if (next.length === 1 && next[0]) {
@@ -580,79 +555,48 @@ function SplitPayApplication() {
     selectedPayerIds.length > 0 &&
     totalPaidCents === totalExpenseCents;
 
-  let baseBalances: ParticipantBalanceEntry[] = group.participants.map((p) => ({
-    participantId: p.id,
-    netBalanceCents: 0,
-  }));
-
-  let activeExpenseSnapshot: Expense | null = null;
+  const storedExpense = activeProject.expenses[0];
+  let activeExpenseSnapshot: Expense | null = !expenseDraftChanged && storedExpense ? storedExpense : null;
 
   try {
-    if (payersSumMatchesTotal && group.participants.length > 0) {
-      const splits =
-        splitMode === 'EXACT'
-          ? calculateExactSplit(
-              totalExpenseCents,
-              group.participants,
-              group.participants.map((p) => ({
-                participantId: p.id,
-                value:
-                  valuesByParticipant[p.id] && valuesByParticipant[p.id]?.trim() !== ''
-                    ? toCents(valuesByParticipant[p.id] ?? '0')
-                    : 0,
-              })),
-            )
-          : calculateWeightedSharesSplit(
-              totalExpenseCents,
-              group.participants,
-              group.participants.map((p) => ({
-                participantId: p.id,
-                value:
-                  valuesByParticipant[p.id] && valuesByParticipant[p.id]?.trim() !== ''
-                    ? Number(valuesByParticipant[p.id])
-                    : p.defaultWeight,
-              })),
-            );
-
-      const owedMap = new Map(splits.map((s) => [s.participantId, s.amountCents]));
-      baseBalances = group.participants.map((p) => {
-        const paid = paidCentsByParticipant.get(p.id) ?? 0;
-        const owed = owedMap.get(p.id) ?? 0;
-        return {
-          participantId: p.id,
-          netBalanceCents: paid - owed,
-        };
-      });
-
+    if (!activeExpenseSnapshot && payersSumMatchesTotal && group.participants.length > 0) {
+      const splitInputs = buildSplitInputs(splitMode, group.participants, valuesByParticipant, excludedParticipantIds);
+      const splits = calculateExpenseSplit(totalExpenseCents, group.participants, splitMode, splitInputs);
       const validPayers = selectedPayerIds
         .map((id) => ({
           participantId: id,
           amountCents: paidCentsByParticipant.get(id) ?? 0,
         }))
-        .filter((py) => py.amountCents > 0);
+        .filter((payer) => payer.amountCents > 0);
 
       activeExpenseSnapshot = {
-        id: `exp_bill_${group.id}`,
+        ...storedExpense,
+        id: storedExpense?.id ?? `exp_bill_${group.id}`,
         groupId: group.id,
-        description: 'Conta Principal do Grupo',
-        category: 'OTHER',
+        description: storedExpense?.description ?? 'Conta Principal do Grupo',
+        category: storedExpense?.category ?? 'OTHER',
         amountCents: totalExpenseCents,
-        currency: group.baseCurrency,
+        currency: storedExpense?.currency ?? group.baseCurrency,
         payers: validPayers,
         splitType: splitMode,
+        splitInputs,
         splits,
-        createdAt: group.createdAt,
+        createdAt: storedExpense?.createdAt ?? group.createdAt,
       };
     }
   } catch {
-    // Mantém saldo zero enquanto o usuário digita uma divisão exata incompleta
+    // A prévia do rateio mostra a validação enquanto o rascunho está incompleto.
   }
+
+  const currentExpenses = activeExpenseSnapshot
+    ? [activeExpenseSnapshot, ...activeProject.expenses.slice(1)]
+    : activeProject.expenses;
 
   function persistActiveExpenseSnapshot(targetGroupId: string, expenseToSave: Expense | null) {
     if (!expenseToSave) return;
     setProjects((prev) =>
       prev.map((proj) =>
-        proj.group.id === targetGroupId ? { ...proj, expenses: [expenseToSave] } : proj,
+        proj.group.id === targetGroupId ? { ...proj, expenses: [expenseToSave, ...proj.expenses.slice(1)] } : proj,
       ),
     );
   }
@@ -666,7 +610,7 @@ function SplitPayApplication() {
     balanceError = 'Complete o valor, os pagadores e a divisão para calcular os saldos.';
   } else {
     try {
-      const balances = applySettlementsToBalances(baseBalances, settlements);
+      const balances = calculateProjectEffectiveBalances({ ...activeProject, expenses: currentExpenses });
       transfers = simplifyDebts(balances);
       effectiveBalances = balances;
     } catch {
@@ -688,7 +632,7 @@ function SplitPayApplication() {
           p.group.id === activeProject.group.id
             ? {
                 ...p,
-                expenses: activeExpenseSnapshot ? [activeExpenseSnapshot] : p.expenses,
+                expenses: currentExpenses,
                 settlements: [...p.settlements, record],
               }
             : p,
@@ -708,7 +652,7 @@ function SplitPayApplication() {
           p.group.id === activeProject.group.id
             ? {
                 ...p,
-                expenses: !balanceError && activeExpenseSnapshot ? [activeExpenseSnapshot] : p.expenses,
+                expenses: balanceError ? p.expenses : currentExpenses,
                 settlements: remaining,
               }
             : p,
@@ -729,7 +673,7 @@ function SplitPayApplication() {
             data-testid="back-to-home-btn"
             type="button"
             onClick={() => {
-              if (!balanceError) persistActiveExpenseSnapshot(group.id, activeExpenseSnapshot);
+              if (expenseDraftChanged && !balanceError) persistActiveExpenseSnapshot(group.id, activeExpenseSnapshot);
               setActiveGroupId(null);
               setFeedbackError(null);
               setFeedbackBanner(null);
@@ -848,35 +792,27 @@ function SplitPayApplication() {
                   </h2>
                 </div>
 
-                <div className="inline-flex rounded-xl bg-slate-100 p-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSplitMode('SHARES');
-                      setValuesByParticipant({});
-                    }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                      splitMode === 'SHARES'
-                        ? 'bg-white text-indigo-700 shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Por Pesos / Cotas
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSplitMode('EXACT');
-                      setValuesByParticipant({});
-                    }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                      splitMode === 'EXACT'
-                        ? 'bg-white text-indigo-700 shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Valor Fixo Exato
-                  </button>
+                <div className="flex flex-wrap rounded-xl bg-slate-100 p-1">
+                  {(Object.keys(splitModeLabels) as AdvancedSplitMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={splitMode === mode}
+                      onClick={() => {
+                        if (splitMode === mode) return;
+                        setExpenseDraftChanged(true);
+                        setSplitMode(mode);
+                        setValuesByParticipant({});
+                      }}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                        splitMode === mode
+                          ? 'bg-white text-indigo-700 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {splitModeLabels[mode]}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -896,6 +832,7 @@ function SplitPayApplication() {
                   value={rawAmount}
                   onChange={(e) => {
                     const nextVal = e.target.value;
+                    setExpenseDraftChanged(true);
                     setRawAmount(nextVal);
                     if (selectedPayerIds.length === 1 && selectedPayerIds[0]) {
                       setPayerAmounts((prev) => ({ ...prev, [selectedPayerIds[0]!]: nextVal }));
@@ -987,12 +924,13 @@ function SplitPayApplication() {
                               min="0"
                               value={currentPaidVal}
                               placeholder="0,00"
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                setExpenseDraftChanged(true);
                                 setPayerAmounts((prev) => ({
                                   ...prev,
                                   [participant.id]: e.target.value,
-                                }))
-                              }
+                                }));
+                              }}
                               className="w-28 rounded-lg border border-slate-300 px-3 py-1.5 text-right text-sm font-medium text-slate-900 focus:border-indigo-500 focus:outline-none"
                             />
                             <button
@@ -1039,9 +977,17 @@ function SplitPayApplication() {
                 totalAmountCents={totalExpenseCents}
                 participants={group.participants}
                 valuesByParticipant={valuesByParticipant}
-                onChangeValue={(participantId, val) =>
-                  setValuesByParticipant((prev) => ({ ...prev, [participantId]: val }))
-                }
+                excludedParticipantIds={excludedParticipantIds}
+                onChangeValue={(participantId, val) => {
+                  setExpenseDraftChanged(true);
+                  setValuesByParticipant((prev) => ({ ...prev, [participantId]: val }));
+                }}
+                onToggleParticipant={(participantId, included) => {
+                  setExpenseDraftChanged(true);
+                  setExcludedParticipantIds((prev) => included
+                    ? prev.filter((id) => id !== participantId)
+                    : [...prev, participantId]);
+                }}
               />
             </section>
 

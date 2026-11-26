@@ -70,6 +70,7 @@ export interface Expense {
   exchangeRate?: number;
   payers: ExpensePayer[];
   splitType: SplitType;
+  splitInputs?: SplitShareInput[];
   splits: ExpenseSplit[];
   createdAt: string;
 }
