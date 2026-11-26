@@ -60,15 +60,12 @@ import {
 import { GroupHeader } from './ui/features/groups/GroupHeader';
 import { ParticipantsPanel } from './ui/features/groups/ParticipantsPanel';
 import { ProjectsHomeView } from './ui/features/workspace/ProjectsHomeView';
+import {
+  createLocalStorageRepository,
+  type PersistedWorkspaceSnapshot,
+} from './services/storageRepository';
 
-const STORAGE_KEY = 'splitpay_ledger_workspace_v1';
-
-interface PersistedWorkspaceSnapshot {
-  users: UserAccount[];
-  currentUserId: string | null;
-  projects: GroupLedgerState[];
-  notifications: EmailNotification[];
-}
+const workspaceStorage = createLocalStorageRepository(() => window.localStorage);
 
 function buildInitialWorkspace(users: readonly UserAccount[]): {
   projects: GroupLedgerState[];
@@ -160,66 +157,28 @@ function buildInitialWorkspace(users: readonly UserAccount[]): {
   };
 }
 
-function loadInitialSnapshot(): PersistedWorkspaceSnapshot {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as PersistedWorkspaceSnapshot;
-      if (Array.isArray(parsed.users) && Array.isArray(parsed.projects)) {
-        const migratedProjects = parsed.projects.map((proj) => {
-          if (proj.expenses.length === 0 && proj.group.participants.length > 1) {
-            const firstPayerId = proj.group.participants[0]!.id;
-            const defaultAmountCents = 10000;
-            return {
-              ...proj,
-              expenses: [
-                {
-                  id: `exp_bill_${proj.group.id}`,
-                  groupId: proj.group.id,
-                  description: 'Conta Principal do Grupo',
-                  category: 'OTHER' as const,
-                  amountCents: defaultAmountCents,
-                  currency: proj.group.baseCurrency,
-                  payers: [{ participantId: firstPayerId, amountCents: defaultAmountCents }],
-                  splitType: 'SHARES' as const,
-                  splits: calculateWeightedSharesSplit(
-                    defaultAmountCents,
-                    proj.group.participants,
-                    proj.group.participants.map((p) => ({
-                      participantId: p.id,
-                      value: p.defaultWeight,
-                    })),
-                  ),
-                  createdAt: proj.group.createdAt,
-                },
-              ],
-            };
-          }
-          return proj;
-        });
-
-        return {
-          ...parsed,
-          projects: migratedProjects,
-        };
-      }
-    }
-  } catch {
-    // Fallback para seed padrão se o localStorage estiver vazio ou inválido
+function loadInitialSnapshot() {
+  const stored = workspaceStorage.load();
+  if (stored.status === 'restored') {
+    return { snapshot: stored.snapshot, preserveStorage: false };
   }
 
   const seededUsers = createSeededUsers();
   const initialWorkspace = buildInitialWorkspace(seededUsers);
-  return {
+  const snapshot: PersistedWorkspaceSnapshot = {
     users: seededUsers,
     currentUserId: 'usr_allan',
-    projects: initialWorkspace.projects,
-    notifications: initialWorkspace.notifications,
+    ...initialWorkspace,
+  };
+  return {
+    snapshot,
+    preserveStorage: stored.status === 'unreadable',
   };
 }
 
 function SplitPayApplication() {
-  const [initialSnapshot] = useState<PersistedWorkspaceSnapshot>(loadInitialSnapshot);
+  const [{ snapshot: initialSnapshot, preserveStorage }] = useState(loadInitialSnapshot);
+  const [storageWriteFailed, setStorageWriteFailed] = useState(false);
   const [users, setUsers] = useState<UserAccount[]>(initialSnapshot.users);
   const [currentUserId, setCurrentUserId] = useState<string | null>(initialSnapshot.currentUserId);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -240,20 +199,25 @@ function SplitPayApplication() {
   const [valuesByParticipant, setValuesByParticipant] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    try {
-      const snapshot: PersistedWorkspaceSnapshot = {
-        users,
-        currentUserId,
-        projects,
-        notifications,
-      };
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-    } catch {
-      // Ignora falhas de quota do navegador
-    }
-  }, [users, currentUserId, projects, notifications]);
+    if (preserveStorage) return;
+    const saved = workspaceStorage.save({
+      ...initialSnapshot,
+      users,
+      currentUserId,
+      projects,
+      notifications,
+    });
+    setStorageWriteFailed(!saved);
+  }, [initialSnapshot, preserveStorage, users, currentUserId, projects, notifications]);
 
   const currentUser = users.find((u) => u.id === currentUserId) ?? null;
+  const storageNotice = (preserveStorage || storageWriteFailed) && (
+    <p role="alert" className="mx-auto max-w-6xl rounded-xl bg-amber-100 px-4 py-3 text-sm text-amber-900">
+      {preserveStorage
+        ? 'Não foi possível ler os dados locais. As mudanças nesta sessão não serão gravadas.'
+        : 'Não foi possível gravar os dados locais. As mudanças podem ser perdidas ao fechar a página.'}
+    </p>
+  );
 
   function handleLogin(email: string, password: string) {
     try {
@@ -379,12 +343,15 @@ function SplitPayApplication() {
 
   if (!currentUser) {
     return (
-      <AuthScreen
-        seededUsers={users}
-        errorMessage={authError}
-        onLogin={handleLogin}
-        onRegister={handleRegister}
-      />
+      <>
+        {storageNotice}
+        <AuthScreen
+          seededUsers={users}
+          errorMessage={authError}
+          onLogin={handleLogin}
+          onRegister={handleRegister}
+        />
+      </>
     );
   }
 
@@ -396,6 +363,7 @@ function SplitPayApplication() {
     return (
       <div className="min-h-screen bg-slate-50 py-8 text-slate-900">
         <div className="mx-auto max-w-6xl space-y-6 px-4">
+          {storageNotice}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white">
@@ -755,6 +723,7 @@ function SplitPayApplication() {
   return (
     <div className="min-h-screen bg-slate-50 py-8 text-slate-900">
       <div className="mx-auto max-w-6xl space-y-6 px-4">
+        {storageNotice}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <button
             data-testid="back-to-home-btn"
