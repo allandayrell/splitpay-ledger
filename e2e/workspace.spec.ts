@@ -1,0 +1,97 @@
+import { expect, test } from '@playwright/test';
+
+const capitolioId = 'grp_capitolio';
+const ownerParticipantId = 'p_usr_allan';
+const openCapitolio = `open-project-btn-${capitolioId}`;
+
+test.beforeEach(async ({ page }) => {
+  await page.route('https://**/*', (route) => route.abort());
+  await page.goto('/');
+});
+
+test('cria projeto, adiciona participantes e divide uma conta por pesos', async ({ page }) => {
+  await page.getByTestId('open-create-project-btn').click();
+  await page.getByTestId('new-project-name-input').fill('Viagem E2E');
+  await page.getByTestId('submit-create-project-btn').click();
+
+  await expect(page.getByTestId('group-name-heading')).toHaveText('Viagem E2E');
+  const nameInput = page.getByTestId('participant-name-input');
+  await nameInput.fill('Diana');
+  await page.getByTestId('add-participant-btn').click();
+  await nameInput.fill('Eduardo');
+  await page.getByTestId('add-participant-btn').click();
+  await page.getByTestId('expense-total-input').fill('60.00');
+
+  const transfers = page.getByTestId('transfer-instructions-list');
+  await expect(transfers.getByRole('listitem')).toHaveCount(2);
+  await expect(transfers.getByRole('listitem').filter({ hasText: 'Diana' })).toContainText('R$ 20,00');
+  await expect(transfers.getByRole('listitem').filter({ hasText: 'Eduardo' })).toContainText('R$ 20,00');
+});
+
+test('valida a soma do rateio exato antes de liberar os acertos', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  await page.getByRole('button', { name: 'Valor Fixo Exato' }).click();
+  await page.getByTestId(`split-input-exact-${ownerParticipantId}`).fill('50');
+  await page.getByTestId('split-input-exact-p_warley_1').fill('30');
+  await page.getByTestId('split-input-exact-p_carla_1').fill('10');
+
+  await expect(page.getByTestId('advanced-split-error')).toBeVisible();
+  await expect(page.getByTestId('transfer-plan-panel').getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Quitar Transferência' })).toHaveCount(0);
+
+  await page.getByTestId('split-input-exact-p_carla_1').fill('20');
+  await expect(page.getByTestId('advanced-split-valid')).toBeVisible();
+  await expect(page.getByTestId('transfer-instructions-list').getByRole('listitem')).toHaveCount(2);
+});
+
+test('quita transferências e desfaz um pagamento pelo histórico', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  const payTransfer = page.getByRole('button', { name: 'Quitar Transferência' });
+  await expect(payTransfer).toHaveCount(2);
+  await payTransfer.first().click();
+  await expect(payTransfer).toHaveCount(1);
+  await payTransfer.click();
+
+  await expect(page.getByTestId('all-settled-banner')).toBeVisible();
+  const history = page.getByTestId('settlements-history');
+  await expect(history.getByRole('listitem')).toHaveCount(2);
+  await history.getByRole('button', { name: 'Voltar', exact: true }).first().click();
+
+  await expect(payTransfer).toHaveCount(1);
+  await expect(history.getByRole('listitem')).toHaveCount(1);
+});
+
+test('restaura os valores de vários pagadores após voltar à home e recarregar', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  await page.getByTestId('add-payer-select').selectOption('p_warley_1');
+  const ownerAmount = page.getByTestId(`payer-amount-input-${ownerParticipantId}`);
+  const memberAmount = page.getByTestId('payer-amount-input-p_warley_1');
+  await ownerAmount.fill('60');
+  await memberAmount.fill('40');
+  await expect(page.getByTestId('payers-sum-valid')).toBeVisible();
+
+  await page.getByTestId('back-to-home-btn').click();
+  await page.reload();
+  await page.getByTestId(openCapitolio).click();
+
+  await expect(ownerAmount).toHaveValue('60.00');
+  await expect(memberAmount).toHaveValue('40.00');
+  await expect(page.getByTestId('payers-sum-valid')).toBeVisible();
+});
+
+test('dono arquiva e participante comum encontra o projeto sem controles do dono', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  await page.getByRole('button', { name: 'Arquivar Projeto' }).click();
+  await expect(page.getByRole('button', { name: 'Reabrir Projeto' })).toBeVisible();
+
+  await page.getByTestId('back-to-home-btn').click();
+  await page.getByTestId('logout-btn').click();
+  await page.getByTestId('quick-login-usr_warley').click();
+  await page.getByTestId('toggle-archived-section-btn').click();
+  const archives = page.getByTestId('section-archived-projects');
+  await archives.getByTestId(openCapitolio).click();
+
+  await expect(page.getByTestId('group-name-heading')).toHaveText('Viagem Capitólio 2026');
+  await expect(page.getByTestId('participant-readonly-badge')).toBeVisible();
+  await expect(page.getByTestId('toggle-archive-project-btn')).toHaveCount(0);
+});
