@@ -90,7 +90,7 @@ export function renameProjectAsOwner(
   return updateGroupName(group, newName);
 }
 
-export type ProjectGroupStatus = 'QUITE' | 'PENDENTE';
+export type ProjectGroupStatus = 'QUITE' | 'PENDENTE' | 'INCONSISTENTE';
 
 export function calculateProjectEffectiveBalances(
   project: GroupLedgerState,
@@ -100,39 +100,43 @@ export function calculateProjectEffectiveBalances(
     netMap.set(participant.id, 0);
   }
 
+  function adjustBalance(participantId: string, difference: Cents) {
+    const balance = netMap.get(participantId);
+    if (balance === undefined) {
+      throw new DomainValidationError(
+        'UNKNOWN_EXPENSE_PARTICIPANT',
+        'Expense references a participant outside the project.',
+      );
+    }
+    netMap.set(participantId, balance + difference);
+  }
+
   for (const expense of project.expenses) {
     for (const payer of expense.payers) {
-      netMap.set(payer.participantId, (netMap.get(payer.participantId) ?? 0) + payer.amountCents);
+      adjustBalance(payer.participantId, payer.amountCents);
     }
     for (const split of expense.splits) {
-      netMap.set(split.participantId, (netMap.get(split.participantId) ?? 0) - split.amountCents);
+      adjustBalance(split.participantId, -split.amountCents);
     }
   }
 
-  const baseBalances: ParticipantBalanceEntry[] = project.group.participants.map((p) => ({
-    participantId: p.id,
-    netBalanceCents: netMap.get(p.id) ?? 0,
+  const baseBalances = Array.from(netMap, ([participantId, netBalanceCents]) => ({
+    participantId,
+    netBalanceCents,
   }));
-
-  try {
-    return applySettlementsToBalances(baseBalances, project.settlements);
-  } catch {
-    return baseBalances;
-  }
+  return applySettlementsToBalances(baseBalances, project.settlements);
 }
 
 export function getProjectTransferPlan(project: GroupLedgerState): TransferInstruction[] {
-  try {
-    const effective = calculateProjectEffectiveBalances(project);
-    return simplifyDebts(effective);
-  } catch {
-    return [];
-  }
+  return simplifyDebts(calculateProjectEffectiveBalances(project));
 }
 
 export function resolveProjectStatus(project: GroupLedgerState): ProjectGroupStatus {
-  const transfers = getProjectTransferPlan(project);
-  return transfers.length === 0 ? 'QUITE' : 'PENDENTE';
+  try {
+    return getProjectTransferPlan(project).length === 0 ? 'QUITE' : 'PENDENTE';
+  } catch {
+    return 'INCONSISTENTE';
+  }
 }
 
 export function setProjectArchivedAsOwner(
@@ -242,8 +246,10 @@ export function categorizeProjectsForUserHome(
       continue;
     }
 
-    const userPendingTransfers = getUserPendingTransfersInProject(project, user);
-    if (userPendingTransfers.length > 0) {
+    if (
+      resolveProjectStatus(project) === 'INCONSISTENTE' ||
+      getUserPendingTransfersInProject(project, user).length > 0
+    ) {
       pendingActionProjects.push(project);
     } else {
       settledForUserProjects.push(project);
