@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 
 const capitolioId = 'grp_capitolio';
@@ -217,4 +218,44 @@ test('edita e exclui despesas pelo histórico e mantém o projeto vazio após re
 
   await expect(page.getByTestId('expense-total-spent')).toHaveText('R$ 0,00');
   await expect(page.getByTestId('all-settled-banner')).toBeVisible();
+});
+
+test('filtra despesas, baixa relatórios e restaura as despesas após recarregar', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  await page.getByRole('button', { name: 'Nova despesa' }).click();
+  await page.getByLabel('Descrição da despesa').fill('Jantar');
+  await page.getByLabel('Categoria', { exact: true }).selectOption('FOOD');
+  await page.getByTestId('expense-total-input').fill('60');
+  await page.getByRole('checkbox', { name: 'Incluir Carla Souza no rateio' }).uncheck();
+  await page.getByRole('button', { name: 'Salvar despesa' }).click();
+
+  const records = page.getByTestId('expense-list');
+  await page.getByLabel('Filtrar por participante').selectOption('p_carla_1');
+  await expect(records.getByRole('listitem')).toHaveCount(1);
+  await expect(records).toContainText('Conta do Projeto');
+  await page.getByLabel('Tipo de despesa').selectOption('FOOD');
+  await expect(page.getByText('Nenhuma despesa corresponde aos filtros.')).toBeVisible();
+  await page.getByLabel('Filtrar por participante').selectOption('p_warley_1');
+  await expect(records).toContainText('Jantar');
+
+  const [csv] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Baixar CSV da lista' }).click(),
+  ]);
+  const csvContent = await readFile(await csv.path(), 'utf8');
+  expect(csv.suggestedFilename()).toBe('splitpay-despesas.csv');
+  expect(csvContent).toContain('Jantar,FOOD');
+  expect(csvContent).not.toContain('Conta do Projeto');
+
+  const [summary] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Baixar resumo em texto' }).click(),
+  ]);
+  expect(await readFile(await summary.path(), 'utf8')).toContain('Total gasto R$ 160,00');
+
+  await page.getByTestId('back-to-home-btn').click();
+  await page.reload();
+  await page.getByTestId(openCapitolio).click();
+  await expect(records.getByRole('listitem')).toHaveCount(2);
+  await expect(page.getByTestId('expense-total-spent')).toHaveText('R$ 160,00');
 });

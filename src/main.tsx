@@ -829,7 +829,7 @@ function SplitPayApplication() {
 
           <div className="space-y-6 lg:col-span-7">
             <ExpenseRecordsPanel
-              expenses={activeProject.expenses}
+              project={activeProject}
               onCreate={() => handleSelectExpense(null)}
               onEdit={handleSelectExpense}
               onRemove={handleRemoveExpense}
@@ -883,6 +883,7 @@ function SplitPayApplication() {
                 <label className="space-y-1 text-sm font-semibold text-slate-700">
                   <span>Categoria</span>
                   <select
+                    aria-label="Categoria"
                     value={expenseCategory}
                     onChange={(event) => {
                       setExpenseDraftChanged(true);

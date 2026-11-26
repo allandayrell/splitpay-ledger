@@ -1,5 +1,5 @@
 import { DomainValidationError } from '../errors';
-import type { Cents } from '../types';
+import type { Cents, CurrencyCode } from '../types';
 
 export function assertValidIntegerCents(cents: Cents, label = 'amountCents'): void {
   if (typeof cents !== 'number' || !Number.isFinite(cents) || !Number.isInteger(cents)) {
@@ -42,6 +42,12 @@ export function formatBRL(cents: Cents): string {
   const prefix = isNegative ? '-R$ ' : 'R$ ';
 
   return `${prefix}${formattedReais},${formattedCentavos}`;
+}
+
+export function formatCurrency(cents: Cents, currency: CurrencyCode): string {
+  if (currency === 'BRL') return formatBRL(cents);
+  assertValidIntegerCents(cents);
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(cents / 100);
 }
 
 export function convertCurrencyToBRL(originalAmountCents: Cents, exchangeRate: number): Cents {
