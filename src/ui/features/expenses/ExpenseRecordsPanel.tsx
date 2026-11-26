@@ -3,7 +3,8 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   exportExpensesCsv, exportProjectJson, exportProjectText, filterExpenses,
 } from '../../../domain/export/exporter';
-import { formatCurrency } from '../../../domain/money/money';
+import { formatOriginalCurrencyBadge } from '../../../domain/ledger/multiCurrencyExpense';
+import { formatCurrency, isCurrencyCode } from '../../../domain/money/money';
 import type { Expense, ExpenseCategory, GroupLedgerState } from '../../../domain/types';
 
 export const expenseCategoryLabels = {
@@ -57,7 +58,9 @@ export function ExpenseRecordsPanel({ project, onCreate, onEdit, onRemove }: Exp
         <div>
           <h2 className="text-lg font-bold text-slate-900">Despesas do projeto</h2>
           <p className="text-sm text-slate-600">
-            Total gasto <strong data-testid="expense-total-spent">{formatCurrency(totalSpent, group.baseCurrency)}</strong>
+            Total gasto <strong data-testid="expense-total-spent">
+              {Number.isSafeInteger(totalSpent) ? formatCurrency(totalSpent, group.baseCurrency) : '—'}
+            </strong>
           </p>
         </div>
         <button
@@ -109,6 +112,13 @@ export function ExpenseRecordsPanel({ project, onCreate, onEdit, onRemove }: Exp
                 <p className="text-xs text-slate-600">
                   {expenseCategoryLabels[expense.category]} · {formatCurrency(expense.amountCents, group.baseCurrency)}
                 </p>
+                {typeof expense.originalAmountCents === 'number' &&
+                  Number.isSafeInteger(expense.originalAmountCents) &&
+                  isCurrencyCode(expense.currency) && (
+                    <p className="text-xs font-semibold text-indigo-700">
+                      {formatOriginalCurrencyBadge(expense.originalAmountCents, expense.currency, expense.exchangeRate)}
+                    </p>
+                  )}
               </div>
               <div className="flex items-center gap-2">
                 <button

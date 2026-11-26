@@ -10,6 +10,30 @@ import {
 import { DomainValidationError } from '../errors';
 
 describe('Money Domain Engine', () => {
+  it('rounds decimal half cents without binary floating-point drift', () => {
+    expect(toCents('1,005')).toBe(101);
+    expect(toCents(1.005)).toBe(101);
+    expect(toCents('-1.005')).toBe(-100);
+    expect(toCents('1e-2')).toBe(1);
+    expect(toCents('90071992547409.91')).toBe(Number.MAX_SAFE_INTEGER);
+    expect(toCents('0')).toBe(0);
+    expect(toCents(-0)).toBe(-0);
+    expect(toCents('0x10')).toBe(1600);
+  });
+
+  it('rejects amounts that overflow the safe integer cent range', () => {
+    expect(() => toCents('90071992547409.92')).toThrow(DomainValidationError);
+  });
+
+  it('preserves the full amount when extremely large weights would overflow their floating sum', () => {
+    expect(allocatePenniesWeighted(101, [Number.MAX_VALUE, Number.MAX_VALUE])).toEqual([51, 50]);
+    expect(allocatePenniesWeighted(101, [0, Number.MIN_VALUE, Number.MIN_VALUE])).toEqual([0, 51, 50]);
+  });
+
+  it('rounds an exact half-cent correctly at a fixed exchange rate', () => {
+    expect(convertCurrencyToBRL(100, 1.005)).toBe(101);
+  });
+
   it('converts decimal BRL amount string or number to exact integer cents', () => {
     expect(toCents(10.5)).toBe(1050);
     expect(toCents(19.99)).toBe(1999);

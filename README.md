@@ -9,9 +9,13 @@
 
 ## Sobre o sistema
 
-O SplitPay Ledger organiza contas de viagens, repúblicas e encontros. Cada projeto tem participantes, pagadores, rateios e um histórico de acertos. A home mostra a pendência de cada usuário. O dono pode renomear, arquivar e reabrir o projeto. Os participantes podem registrar e desfazer acertos.
+O SplitPay Ledger organiza contas de viagens, repúblicas e encontros. Em cada projeto, é possível cadastrar participantes, gerenciar várias despesas com um ou mais pagadores e fazer rateios igualitários, por porcentagem, por valor exato ou por pesos. A lista de despesas tem filtros combináveis e relatórios em CSV, texto e JSON.
 
-O motor calcula valores em centavos e sugere transferências determinísticas. Para um grupo com N participantes e saldos válidos, a estratégia gulosa usa no máximo N − 1 transferências. Contas de demonstração, projetos e notificações internas ficam no armazenamento do navegador.
+A home mostra a pendência de cada usuário. O dono pode renomear, arquivar e reabrir o projeto. Os participantes podem registrar pagamentos integrais ou parciais e desfazê-los pelo histórico.
+
+O motor calcula valores em centavos e sugere transferências determinísticas. Para N ≥ 1 participantes com saldos válidos, a estratégia gulosa usa no máximo N − 1 transferências. Em projetos com base BRL, despesas em USD, EUR ou GBP podem ser convertidas por uma taxa fixa antes do rateio. O valor original e a taxa permanecem registrados.
+
+Contas de demonstração, projetos e notificações internas ficam no armazenamento do navegador.
 
 ## Tecnologias
 

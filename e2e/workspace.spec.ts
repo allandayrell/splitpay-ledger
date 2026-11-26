@@ -304,3 +304,46 @@ test('registra, restaura e reverte uma quitação parcial sem exceder a dívida'
   await page.getByTestId('settlements-history').getByRole('button', { name: 'Voltar', exact: true }).click();
   await expect(transfer).toContainText('R$ 33,33');
 });
+
+test('converte uma despesa estrangeira antes do rateio e restaura o câmbio após recarga', async ({ page }) => {
+  await page.getByTestId(openCapitolio).click();
+  await page.getByRole('button', { name: 'Nova despesa' }).click();
+  await page.getByLabel('Descrição da despesa').fill('Museu em dólar');
+  await page.getByTestId('expense-currency-select').selectOption('USD');
+  await page.getByTestId('expense-total-input').fill('2.50');
+  const save = page.getByRole('button', { name: 'Salvar despesa' });
+  await expect(save).toBeDisabled();
+  await expect(page.getByTestId('multi-currency-selector').getByRole('alert')).toContainText('taxa de câmbio');
+
+  const rate = page.getByTestId('expense-exchange-rate-input');
+  await rate.fill('5.40');
+  await expect(page.getByTestId('currency-conversion-preview')).toContainText('R$ 13,50');
+  await expect(page.getByTestId(`payer-amount-input-${ownerParticipantId}`)).toHaveValue('13.50');
+  await save.click();
+
+  const record = page.getByTestId('expense-list').getByRole('listitem').filter({ hasText: 'Museu em dólar' });
+  await expect(record).toContainText('US$ 2,50 (câmbio 5,40)');
+  await expect(page.getByTestId('expense-total-spent')).toHaveText('R$ 113,50');
+  await page.getByTestId('back-to-home-btn').click();
+  await page.reload();
+  await page.getByTestId(openCapitolio).click();
+  await page.getByRole('button', { name: 'Editar despesa Museu em dólar' }).click();
+  await expect(page.getByTestId('expense-total-input')).toHaveValue('2.50');
+  await expect(rate).toHaveValue('5.4');
+  await expect(record).toContainText('R$ 13,50');
+});
+
+test('exibe rateio, total e transferências na moeda-base estrangeira do projeto', async ({ page }) => {
+  await page.getByTestId('open-create-project-btn').click();
+  await page.getByTestId('new-project-name-input').fill('Viagem em dólar');
+  await page.getByTestId('new-project-currency-select').selectOption('USD');
+  await page.getByTestId('submit-create-project-btn').click();
+  await page.getByTestId('participant-name-input').fill('Diana');
+  await page.getByTestId('add-participant-btn').click();
+  await page.getByTestId('expense-total-input').fill('10');
+  await page.getByRole('button', { name: 'Salvar despesa' }).click();
+
+  await expect(page.getByTestId('expense-total-spent')).toHaveText(/US\$\s+10,00/);
+  await expect(page.getByTestId('advanced-split-inputs')).toContainText(/US\$\s+5,00/);
+  await expect(page.getByTestId('transfer-instructions-list')).toContainText(/US\$\s+5,00/);
+});

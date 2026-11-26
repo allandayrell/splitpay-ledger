@@ -16,7 +16,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { formatBRL } from '../../../domain/money/money';
+import { formatCurrency } from '../../../domain/money/money';
 import {
   categorizeProjectsForUserHome,
   getUserNetBalanceInProject,
@@ -180,8 +180,8 @@ export function ProjectsHomeView({
                     }`}
                   >
                     {userNetCents >= 0
-                      ? `${userPendingTransfers.length} ${userPendingTransfers.length === 1 ? 'transferência' : 'transferências'} a receber (+${formatBRL(userNetCents)})`
-                      : `${userPendingTransfers.length} ${userPendingTransfers.length === 1 ? 'transferência' : 'transferências'} a pagar (${formatBRL(userNetCents)})`}
+                      ? `${userPendingTransfers.length} ${userPendingTransfers.length === 1 ? 'transferência' : 'transferências'} a receber (+${formatCurrency(userNetCents, group.baseCurrency)})`
+                      : `${userPendingTransfers.length} ${userPendingTransfers.length === 1 ? 'transferência' : 'transferências'} a pagar (${formatCurrency(userNetCents, group.baseCurrency)})`}
                   </span>
                 ) : null}
 

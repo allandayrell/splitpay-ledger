@@ -50,6 +50,12 @@ export function normalizeExpenseCurrencyAmount(
   }
 
   const convertedBRLCents = convertCurrencyToBRL(input.amountCents, input.exchangeRate);
+  if (convertedBRLCents === 0) {
+    throw new DomainValidationError(
+      'CONVERTED_EXPENSE_TOO_SMALL',
+      'O valor convertido deve ser de pelo menos um centavo.',
+    );
+  }
 
   return {
     amountCents: convertedBRLCents,
@@ -69,7 +75,9 @@ export function formatOriginalCurrencyBadge(
   const major = Math.floor(Math.abs(originalAmountCents) / 100);
   const minor = (Math.abs(originalAmountCents) % 100).toString().padStart(2, '0');
   const rateSuffix =
-    exchangeRate !== undefined ? ` (câmbio ${exchangeRate.toFixed(2).replace('.', ',')})` : '';
+    exchangeRate !== undefined
+      ? ` (câmbio ${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 12 }).format(exchangeRate)})`
+      : '';
 
   return `${symbol} ${major},${minor}${rateSuffix}`;
 }

@@ -1,13 +1,46 @@
 import { DomainValidationError } from '../errors';
 import type { Cents, CurrencyCode } from '../types';
 
+const currencyCodes = new Set<unknown>(['BRL', 'USD', 'EUR', 'GBP']);
+const decimalPattern = /^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
+export function isCurrencyCode(value: unknown): value is CurrencyCode {
+  return currencyCodes.has(value);
+}
+
 export function assertValidIntegerCents(cents: Cents, label = 'amountCents'): void {
-  if (typeof cents !== 'number' || !Number.isFinite(cents) || !Number.isInteger(cents)) {
+  if (!Number.isSafeInteger(cents)) {
     throw new DomainValidationError(
       'INVALID_MONETARY_CENTS',
-      `${label} must be a finite integer representing cents.`,
+      `${label} must be a safe integer representing cents.`,
     );
   }
+}
+
+function decimalParts(value: string) {
+  const [significand, exponent = '0'] = value.toLowerCase().split('e');
+  const [whole, fraction = ''] = significand!.split('.');
+  return {
+    digits: BigInt(`${whole}${fraction}`),
+    power: Number(exponent) - fraction.length,
+  };
+}
+
+function roundScaledDecimal(value: string, minorUnits: number, multiplier: bigint, negative = false): Cents {
+  const { digits, power } = decimalParts(value);
+  const scaledPower = power + minorUnits;
+  let rounded = digits * multiplier;
+  if (scaledPower >= 0) {
+    rounded *= 10n ** BigInt(scaledPower);
+  } else {
+    const divisor = 10n ** BigInt(-scaledPower);
+    const twiceRemainder = (rounded % divisor) * 2n;
+    rounded /= divisor;
+    if (twiceRemainder > divisor || (twiceRemainder === divisor && !negative)) rounded += 1n;
+  }
+  const cents = negative ? -Number(rounded) : Number(rounded);
+  assertValidIntegerCents(cents);
+  return cents;
 }
 
 export function toCents(amount: number | string): Cents {
@@ -20,14 +53,18 @@ export function toCents(amount: number | string): Cents {
     if (!Number.isFinite(parsed)) {
       throw new DomainValidationError('INVALID_MONETARY_AMOUNT', 'Monetary amount must be a valid number.');
     }
-    return Math.round(parsed * 100);
+    if (parsed === 0) return parsed;
+    const unsigned = trimmed.replace(/^[+-]/, '');
+    const decimal = decimalPattern.test(unsigned) ? unsigned : String(Math.abs(parsed));
+    return roundScaledDecimal(decimal, 2, 1n, parsed < 0);
   }
 
   if (typeof amount !== 'number' || !Number.isFinite(amount)) {
     throw new DomainValidationError('INVALID_MONETARY_AMOUNT', 'Monetary amount must be a finite number.');
   }
 
-  return Math.round(amount * 100);
+  if (amount === 0) return amount;
+  return roundScaledDecimal(String(Math.abs(amount)), 2, 1n, amount < 0);
 }
 
 export function formatBRL(cents: Cents): string {
@@ -65,7 +102,7 @@ export function convertCurrencyToBRL(originalAmountCents: Cents, exchangeRate: n
     );
   }
 
-  return Math.round(originalAmountCents * exchangeRate);
+  return roundScaledDecimal(String(exchangeRate), 0, BigInt(originalAmountCents));
 }
 
 export function allocatePenniesEqual(totalCents: Cents, count: number): Cents[] {
@@ -97,24 +134,26 @@ export function allocatePenniesWeighted(totalCents: Cents, weights: readonly num
     throw new DomainValidationError('EMPTY_WEIGHTS', 'Weights array cannot be empty.');
   }
 
-  let totalWeight = 0;
-  for (const weight of weights) {
+  const decimals = weights.map((weight) => {
     if (typeof weight !== 'number' || !Number.isFinite(weight) || weight < 0) {
       throw new DomainValidationError('INVALID_WEIGHT_VALUE', 'Each weight must be a non-negative finite number.');
     }
-    totalWeight += weight;
-  }
+    return decimalParts(String(weight));
+  });
+  const commonPower = decimals.reduce((lowest, entry) => Math.min(lowest, entry.power), 0);
+  const scaledWeights = decimals.map(({ digits, power }) => digits * 10n ** BigInt(power - commonPower));
+  const totalWeight = scaledWeights.reduce((sum, weight) => sum + weight, 0n);
 
-  if (totalWeight <= 0) {
+  if (totalWeight === 0n) {
     throw new DomainValidationError('INVALID_TOTAL_WEIGHT', 'Sum of weights must be greater than zero.');
   }
 
   const shares: Cents[] = [];
   let allocatedCents = 0;
 
-  for (const weight of weights) {
-    const exactShare = (totalCents * weight) / totalWeight;
-    const truncatedShare = Math.floor(exactShare);
+  const total = BigInt(totalCents);
+  for (const weight of scaledWeights) {
+    const truncatedShare = Number((total * weight) / totalWeight);
     shares.push(truncatedShare);
     allocatedCents += truncatedShare;
   }
