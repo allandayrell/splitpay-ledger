@@ -1,0 +1,88 @@
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-coverage:
+    name: Unit and coverage (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npm run build
+      - uses: actions/upload-artifact@v6
+        with:
+          name: lcov-${{ matrix.os }}
+          path: coverage/lcov.info
+          if-no-files-found: error
+
+  e2e-playwright:
+    name: Playwright (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - if: runner.os == 'Linux'
+        run: npx playwright install --with-deps --only-shell chromium
+      - if: runner.os != 'Linux'
+        run: npx playwright install --only-shell chromium
+      - run: npm run test:e2e
+      - if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-failure-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: ignore
+
+  publish-codecov:
+    name: Publish to Codecov
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: unit-and-coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Codecov configuration
+        id: codecov
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          if [ -n "$CODECOV_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Codecov publication skipped because CODECOV_TOKEN is unavailable"
+          fi
+      - if: steps.codecov.outputs.enabled == 'true'
+        uses: actions/checkout@v6
+      - if: steps.codecov.outputs.enabled == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: lcov-ubuntu-latest
+          path: coverage
+      - if: steps.codecov.outputs.enabled == 'true'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/lcov.info
+          disable_search: true
+          fail_ci_if_error: true
